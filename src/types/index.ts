@@ -136,6 +136,10 @@ export interface RuleProvider {
   vehicleType: string
 }
 
+export interface RuleProviderDetail extends RuleProvider {
+  rules: Array<{ payload: string; proxy?: string; type?: string }>
+}
+
 export interface ClashApiProfile {
   id: string
   name: string

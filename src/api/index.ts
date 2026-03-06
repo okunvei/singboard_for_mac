@@ -7,6 +7,7 @@ import type {
   ClashConfig,
   ProxyProvider,
   RuleProvider,
+  RuleProviderDetail,
 } from '@/types'
 
 const api = axios.create({
@@ -58,6 +59,8 @@ export const healthCheckProvider = (name: string) =>
   api.get(`/providers/proxies/${encodeURIComponent(name)}/healthcheck`, { timeout: 30000 })
 export const fetchRuleProviders = () =>
   api.get<{ providers: Record<string, RuleProvider> }>('/providers/rules')
+export const fetchRuleProviderDetail = (name: string) =>
+  api.get<RuleProviderDetail>(`/providers/rules/${encodeURIComponent(name)}`)
 export const updateRuleProvider = (name: string) =>
   api.put(`/providers/rules/${encodeURIComponent(name)}`, null, { timeout: 120000 })
 

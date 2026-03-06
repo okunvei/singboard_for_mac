@@ -1,6 +1,6 @@
 [package]
 name = "singboard"
-version = "1.0.0"
+version = "1.4.0"
 edition = "2024"
 
 [lib]
@@ -32,6 +32,7 @@ windows-sys = { version = "0.59", features = [
 winreg = "0.55"
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+flate2 = "1"
 
 [profile.release]
 strip = true

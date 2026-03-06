@@ -40,6 +40,8 @@ fn run_gui() {
             singboard_lib::commands::config::validate_config,
             singboard_lib::commands::config::detect_runtime_files,
             singboard_lib::commands::binary::get_singbox_version,
+            singboard_lib::commands::srs::srs_match,
+            singboard_lib::commands::srs::srs_match_provider,
             singboard_lib::commands::network::fetch_url,
             singboard_lib::commands::network::http_ping,
         ])

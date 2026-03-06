@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRulesStore } from '@/stores/rules'
 import { fetchRuleProviders, updateRuleProvider } from '@/api'
 import type { RuleProvider } from '@/types'
 import { getRequestErrorReason } from '@/utils/requestError'
 import { useToastStore } from '@/stores/toast'
+import { useConfigStore } from '@/stores/config'
+import { srsMatchProvider } from '@/bridge/config'
 
 const { filteredRules, loading, filterText, loadRules } = useRulesStore()
 
@@ -15,6 +17,62 @@ const providersAvailable = ref(false)
 const updatingProvider = ref<string | null>(null)
 const updatingAll = ref(false)
 const { pushToast } = useToastStore()
+const { config } = useConfigStore()
+
+const providerSearchText = ref('')
+const providerSearching = ref(false)
+// undefined = not searched, -1 = error/not found, false = no match, true = matched
+const providerMatchCounts = ref<Record<string, boolean | -1>>({})
+const providerSearchDone = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+const displayedProviders = computed(() => {
+  const q = providerSearchText.value.trim()
+  if (!q) return ruleProviders.value
+  if (!providerSearchDone.value) return ruleProviders.value
+  return ruleProviders.value.filter((p) => providerMatchCounts.value[p.name] === true)
+})
+
+async function searchInProviders() {
+  const q = providerSearchText.value.trim()
+  if (!q) {
+    providerMatchCounts.value = {}
+    providerSearchDone.value = false
+    return
+  }
+  providerSearching.value = true
+  providerSearchDone.value = false
+  const results: Record<string, boolean | -1> = {}
+  await Promise.allSettled(
+    ruleProviders.value.map(async (p) => {
+      try {
+        results[p.name] = await srsMatchProvider(
+          config.value.workingDir ?? '',
+          config.value.configPath ?? '',
+          config.value.singboxPath ?? '',
+          p.name,
+          q,
+        )
+      } catch (e) {
+        console.error(`[srs-search] ${p.name}:`, e)
+        results[p.name] = -1
+      }
+    }),
+  )
+  providerMatchCounts.value = results
+  providerSearchDone.value = true
+  providerSearching.value = false
+}
+
+watch(providerSearchText, (val) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  if (!val.trim()) {
+    providerMatchCounts.value = {}
+    providerSearchDone.value = false
+    return
+  }
+  searchTimer = setTimeout(searchInProviders, 500)
+})
 
 async function loadProviders() {
   try {
@@ -136,13 +194,28 @@ onMounted(() => {
     </template>
 
     <div v-if="activeTab === 'providers'" class="flex-1 overflow-auto space-y-1.5">
-      <div v-if="ruleProviders.length === 0" class="flex items-center justify-center py-10 text-base-content/40">
+      <div
+        v-if="ruleProviders.length === 0"
+        class="flex items-center justify-center py-10 text-base-content/40"
+      >
         暂无规则提供商
       </div>
 
-      <div v-if="ruleProviders.length > 0" class="flex justify-end">
+      <div v-if="ruleProviders.length > 0" class="flex items-center gap-2">
+        <div class="relative flex-1">
+          <input
+            v-model="providerSearchText"
+            type="text"
+            placeholder="搜索规则内容..."
+            class="input input-sm input-bordered w-full"
+          />
+          <span
+            v-if="providerSearching"
+            class="loading loading-spinner loading-xs absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40"
+          ></span>
+        </div>
         <button
-          class="btn btn-sm btn-ghost"
+          class="btn btn-sm btn-ghost shrink-0"
           :class="{ 'loading': updatingAll }"
           @click="handleUpdateAll"
           :disabled="updatingAll"
@@ -152,7 +225,14 @@ onMounted(() => {
       </div>
 
       <div
-        v-for="(provider, i) in ruleProviders"
+        v-if="ruleProviders.length > 0 && providerSearchText.trim() && providerSearchDone && displayedProviders.length === 0"
+        class="flex items-center justify-center py-10 text-base-content/40"
+      >
+        未找到匹配规则
+      </div>
+
+      <div
+        v-for="(provider, i) in displayedProviders"
         :key="provider.name"
         class="bg-base-200 rounded-lg px-3 py-2 flex items-center justify-between"
       >
@@ -160,6 +240,18 @@ onMounted(() => {
           <span class="text-xs text-base-content/30 w-5 shrink-0">{{ i + 1 }}</span>
           <span class="text-sm font-medium truncate">{{ provider.name }}</span>
           <span class="text-xs text-base-content/50">({{ provider.ruleCount }})</span>
+          <template v-if="providerSearchDone">
+            <span
+              v-if="providerMatchCounts[provider.name] === -1"
+              class="text-xs leading-none px-1.5 py-0.5 rounded shrink-0 bg-base-content/10 text-base-content/30"
+              title="未找到规则文件路径"
+            >—</span>
+            <span
+              v-else
+              class="text-xs leading-none px-1.5 py-0.5 rounded shrink-0"
+              :class="providerMatchCounts[provider.name] === true ? 'bg-primary/20 text-primary' : 'bg-base-content/10 text-base-content/30'"
+            >{{ providerMatchCounts[provider.name] === true ? '匹配' : '未匹配' }}</span>
+          </template>
           <span v-if="provider.behavior" class="text-xs leading-none px-1.5 py-0.5 rounded bg-base-content/10 text-base-content/60 shrink-0">{{ provider.behavior }}</span>
           <span v-if="provider.vehicleType" class="text-xs leading-none px-1.5 py-0.5 rounded border border-base-content/20 text-base-content/60 shrink-0">{{ provider.vehicleType }}</span>
         </div>

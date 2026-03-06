@@ -29,3 +29,17 @@ export async function getSingboxVersion(singboxPath: string): Promise<string> {
 export async function detectRuntimeFiles(): Promise<DetectedRuntimeFiles> {
   return invoke<DetectedRuntimeFiles>('detect_runtime_files')
 }
+
+export async function srsMatch(path: string, query: string): Promise<boolean> {
+  return invoke<boolean>('srs_match', { path, query })
+}
+
+export async function srsMatchProvider(
+  workingDir: string,
+  configPath: string,
+  singboxPath: string,
+  tag: string,
+  query: string,
+): Promise<boolean> {
+  return invoke<boolean>('srs_match_provider', { workingDir, configPath, singboxPath, tag, query })
+}
