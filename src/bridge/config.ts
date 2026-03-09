@@ -18,8 +18,18 @@ export async function writeSingboxConfig(path: string, content: string): Promise
 export async function validateSingboxConfig(
   singboxPath: string,
   configPath: string,
+  workingDir?: string,
 ): Promise<string> {
-  return invoke<string>('validate_config', { singboxPath, configPath })
+  return invoke<string>('validate_config', { singboxPath, configPath, workingDir })
+}
+
+export async function validateSingboxConfigContent(
+  singboxPath: string,
+  configPath: string,
+  content: string,
+  workingDir?: string,
+): Promise<string> {
+  return invoke<string>('validate_config_content', { singboxPath, configPath, content, workingDir })
 }
 
 export async function getSingboxVersion(singboxPath: string): Promise<string> {

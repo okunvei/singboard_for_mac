@@ -38,6 +38,7 @@ fn run_gui() {
             singboard_lib::commands::config::read_config,
             singboard_lib::commands::config::write_config,
             singboard_lib::commands::config::validate_config,
+            singboard_lib::commands::config::validate_config_content,
             singboard_lib::commands::config::detect_runtime_files,
             singboard_lib::commands::binary::get_singbox_version,
             singboard_lib::commands::srs::srs_match,

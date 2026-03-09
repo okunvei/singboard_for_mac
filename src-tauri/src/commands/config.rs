@@ -151,9 +151,58 @@ pub async fn write_config(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn validate_config(singbox_path: String, config_path: String) -> Result<String, String> {
+pub async fn validate_config(
+    singbox_path: String,
+    config_path: String,
+    working_dir: Option<String>,
+) -> Result<String, String> {
+    run_singbox_check(&singbox_path, &config_path, working_dir.as_deref()).await
+}
+
+fn make_validate_temp_path(config_path: &Path) -> PathBuf {
+    let parent = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let pid = std::process::id();
+    parent.join(format!(".singboard-validate-{}-{}.json", pid, millis))
+}
+
+fn resolve_working_dir(working_dir: Option<&str>, config_path: &str) -> Result<PathBuf, String> {
+    if let Some(dir) = working_dir.map(str::trim).filter(|v| !v.is_empty()) {
+        let path = PathBuf::from(dir);
+        if !path.exists() {
+            return Err(format!("Working directory does not exist: {}", path.display()));
+        }
+        if !path.is_dir() {
+            return Err(format!("Working directory is not a directory: {}", path.display()));
+        }
+        return Ok(path);
+    }
+
+    if let Some(parent) = Path::new(config_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            return Ok(parent.to_path_buf());
+        }
+    }
+
+    std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))
+}
+
+async fn run_singbox_check(
+    singbox_path: &str,
+    config_path: &str,
+    working_dir: Option<&str>,
+) -> Result<String, String> {
+    let cwd = resolve_working_dir(working_dir, config_path)?;
     let output = tokio::process::Command::new(&singbox_path)
         .args(["check", "-c", &config_path])
+        .current_dir(&cwd)
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .output()
         .await
@@ -167,4 +216,31 @@ pub async fn validate_config(singbox_path: String, config_path: String) -> Resul
     } else {
         Err(format!("{}\n{}", stdout, stderr).trim().to_string())
     }
+}
+
+#[tauri::command]
+pub async fn validate_config_content(
+    singbox_path: String,
+    config_path: String,
+    content: String,
+    working_dir: Option<String>,
+) -> Result<String, String> {
+    serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    let temp_path = make_validate_temp_path(Path::new(&config_path));
+    let temp_path_str = temp_path.to_string_lossy().to_string();
+
+    tokio::fs::write(&temp_path, &content)
+        .await
+        .map_err(|e| format!("Failed to write temp config for validation: {}", e))?;
+
+    let check_result = run_singbox_check(
+        &singbox_path,
+        &temp_path_str,
+        working_dir.as_deref(),
+    )
+    .await;
+    let _ = tokio::fs::remove_file(&temp_path).await;
+    check_result
 }

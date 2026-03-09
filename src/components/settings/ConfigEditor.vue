@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useToastStore } from '@/stores/toast'
-import { readSingboxConfig, writeSingboxConfig, validateSingboxConfig } from '@/bridge/config'
+import { readSingboxConfig, writeSingboxConfig, validateSingboxConfigContent } from '@/bridge/config'
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, highlightActiveLine } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -449,9 +449,21 @@ async function handleValidate() {
     pushToast({ message: '请先在设置中配置 sing-box 路径', type: 'error' })
     return
   }
+  if (!applyEditorChangesToState()) {
+    return
+  }
   validating.value = true
   try {
-    await validateSingboxConfig(props.singboxPath, props.configPath)
+    const content =
+      editorMode.value === 'whole'
+        ? getEditorContent()
+        : JSON.stringify(fullConfigObject.value ?? {}, null, 2)
+    await validateSingboxConfigContent(
+      props.singboxPath,
+      props.configPath,
+      content,
+      props.workingDir,
+    )
     pushToast({ message: '配置文件校验通过', type: 'info' })
   } catch (e: any) {
     pushToast({ message: '校验失败:\n' + (e?.message || e), type: 'error' }, 8000)

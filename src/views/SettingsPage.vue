@@ -189,7 +189,7 @@ async function validateBeforeStart(): Promise<boolean> {
     return false
   }
   try {
-    await validateSingboxConfig(singboxPath, configPath)
+    await validateSingboxConfig(singboxPath, configPath, config.value.workingDir)
     return true
   } catch (e: any) {
     pushToast({ message: '配置文件校验失败:\n' + (e?.message || e), type: 'error' }, 8000)
