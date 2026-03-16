@@ -25,9 +25,31 @@ const {
 } = useProxiesStore()
 
 import { useConfigStore } from '@/stores/config'
+import { useConnectionsStore } from '@/stores/connections'
 const { config } = useConfigStore()
 const { pushToast } = useToastStore()
 const { serviceStatus } = useServiceStore()
+const { connections, start: startConnections } = useConnectionsStore()
+
+function getGroupSpeed(groupName: string): { down: number; up: number } {
+  let down = 0
+  let up = 0
+  for (const conn of connections.value) {
+    if (conn.chains?.includes(groupName)) {
+      down += conn.downloadSpeed ?? 0
+      up += conn.uploadSpeed ?? 0
+    }
+  }
+  return { down, up }
+}
+
+function formatSpeed(bytes: number): string {
+  if (bytes <= 0) return '0 B/s'
+  const k = 1024
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
 
 const isRunning = computed(() => serviceStatus.value.state === 'running')
 
@@ -212,6 +234,7 @@ onMounted(() => {
   if (isRunning.value) {
     loadProxies()
     loadProviders()
+    startConnections()
   }
 })
 
@@ -219,6 +242,7 @@ watch(isRunning, (running) => {
   if (running) {
     loadProxies()
     loadProviders()
+    startConnections()
   }
 })
 
@@ -267,25 +291,38 @@ watch(isRunning, (running) => {
       </div>
 
       <div class="space-y-3">
-      <div v-for="group in filteredGroups" :key="group.name" class="bg-base-200 rounded-lg overflow-hidden">
-        <div
-          class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-base-300 transition-colors"
-          @click="toggleGroup(group.name)"
-        >
-          <div class="flex items-center gap-2">
-            <svg
-              class="w-3 h-3 transition-transform"
-              :class="{ 'rotate-90': expandedGroups.has(group.name) }"
-              viewBox="0 0 12 12"
-            >
-              <path fill="currentColor" d="M4 2l5 4-5 4z" />
-            </svg>
-            <span class="font-medium text-sm">{{ group.name }}</span>
-            <span class="text-xs leading-none px-1.5 py-0.5 rounded bg-base-content/10 text-base-content/60">{{ group.type }}</span>
-            <span class="text-xs text-base-content/50">{{ group.all.length }} 个节点</span>
+      <div
+        v-for="group in filteredGroups"
+        :key="group.name"
+        class="bg-base-200 rounded-lg overflow-hidden cursor-pointer hover:bg-base-300/30 transition-colors"
+        @click="toggleGroup(group.name)"
+      >
+        <div class="flex items-start justify-between px-5 pt-4 pb-4">
+          <div class="flex flex-col gap-2">
+            <div class="flex items-baseline gap-2">
+              <span class="font-semibold text-base">{{ group.name }}</span>
+              <span class="text-xs text-base-content/40">{{ group.type }} ({{ group.all.length }})</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-sm text-base-content/70">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+              </svg>
+              <span class="truncate">{{ group.now }}</span>
+            </div>
+            <div v-show="!expandedGroups.has(group.name)" class="flex flex-wrap gap-1.5">
+              <span
+                v-for="nodeName in group.all"
+                :key="nodeName"
+                class="w-3.5 h-3.5 rounded-full cursor-pointer transition-transform hover:scale-125 hover:ring-1 hover:ring-base-content/30 flex items-center justify-center"
+                :class="dotColor(getLatency(nodeName))"
+                :title="nodeName + ': ' + formatLatency(getLatency(nodeName))"
+                @click.stop="handleSelect(group.name, nodeName)"
+              >
+                <span v-if="group.now === nodeName" class="w-1.5 h-1.5 rounded-full bg-white"></span>
+              </span>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-primary">{{ group.now }}</span>
+          <div class="flex flex-col items-end gap-0.5 shrink-0">
             <button
               class="btn btn-xs btn-ghost min-w-0 px-1 h-5 min-h-0"
               :class="{ 'loading loading-xs': testingGroup === group.name }"
@@ -303,21 +340,23 @@ watch(isRunning, (running) => {
                 <span v-else class="text-xs text-base-content/40">N/A</span>
               </template>
             </button>
+            <span class="text-xs text-base-content/40 pr-1">↓{{ formatSpeed(getGroupSpeed(group.name).down) }}</span>
+            <span class="text-xs text-base-content/40 pr-1">↑{{ formatSpeed(getGroupSpeed(group.name).up) }}</span>
           </div>
         </div>
 
-        <div v-show="expandedGroups.has(group.name)" class="px-3 pb-3">
-          <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, 180px)">
+        <div v-show="expandedGroups.has(group.name)" class="px-5 pb-4">
+          <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))">
             <div
               v-for="nodeName in group.all"
               :key="nodeName"
-              class="flex h-[70px] w-[180px] flex-col items-start gap-2 p-2 rounded-md text-xs transition-all cursor-pointer overflow-hidden"
+              class="flex h-[70px] min-w-[180px] flex-col items-start gap-2 p-2 rounded-md text-xs transition-all cursor-pointer overflow-hidden"
               :class="
                 group.now === nodeName
                   ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
                   : 'bg-base-100 hover:bg-base-300'
               "
-              @click="handleSelect(group.name, nodeName)"
+              @click.stop="handleSelect(group.name, nodeName)"
             >
               <div class="w-full flex-1 text-sm leading-tight break-all" :title="nodeName">
                 {{ nodeName }}
@@ -359,23 +398,34 @@ watch(isRunning, (running) => {
         </button>
       </div>
 
-      <div v-for="provider in proxyProviders" :key="provider.name" class="bg-base-200 rounded-lg overflow-hidden">
-        <div
-          class="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-base-300 transition-colors"
-          @click="toggleProvider(provider.name)"
-        >
-          <div class="flex items-center gap-2">
-            <svg
-              class="w-3 h-3 transition-transform"
-              :class="{ 'rotate-90': expandedProviders.has(provider.name) }"
-              viewBox="0 0 12 12"
-            >
-              <path fill="currentColor" d="M4 2l5 4-5 4z" />
-            </svg>
-            <span class="font-medium text-sm">{{ provider.name }}</span>
-            <span class="text-xs text-base-content/50">({{ testedCount(provider.proxies) }}/{{ provider.proxies?.length ?? 0 }})</span>
+      <div
+        v-for="provider in proxyProviders"
+        :key="provider.name"
+        class="bg-base-200 rounded-lg overflow-hidden cursor-pointer hover:bg-base-300/30 transition-colors"
+        @click="toggleProvider(provider.name)"
+      >
+        <div class="flex items-start justify-between px-5 pt-4 pb-4">
+          <div class="flex flex-col gap-2">
+            <div class="flex items-baseline gap-2">
+              <span class="font-semibold text-base">{{ provider.name }}</span>
+              <span class="text-xs text-base-content/40">{{ provider.proxies?.length ?? 0 }} 个节点 ({{ testedCount(provider.proxies) }} 已测试)</span>
+            </div>
+            <div v-if="provider.subscriptionInfo?.Total" class="text-xs text-base-content/50 space-y-0.5">
+              <div v-if="provider.subscriptionInfo!.Expire">到期: {{ formatExpire(provider.subscriptionInfo!.Expire!) }}</div>
+              <div>{{ formatUsage(provider.subscriptionInfo) }}</div>
+            </div>
+            <div class="text-xs text-base-content/40">更新于 {{ formatDate(provider.updatedAt) }}</div>
+            <div v-show="!expandedProviders.has(provider.name)" class="flex flex-wrap gap-1.5">
+              <span
+                v-for="node in provider.proxies"
+                :key="node.name"
+                class="w-3.5 h-3.5 rounded-full"
+                :class="dotColor(getLatency(node.name))"
+                :title="node.name + ': ' + formatLatency(getLatency(node.name))"
+              ></span>
+            </div>
           </div>
-          <div class="flex items-center gap-1">
+          <div class="flex items-center gap-1 shrink-0">
             <button
               class="btn btn-ghost btn-xs btn-circle"
               :class="{ 'loading': healthCheckingProvider === provider.name }"
@@ -400,32 +450,12 @@ watch(isRunning, (running) => {
           </div>
         </div>
 
-        <div v-if="provider.subscriptionInfo?.Total" class="px-3 text-xs text-base-content/60 space-y-0.5">
-          <div v-if="provider.subscriptionInfo!.Expire">到期时间: {{ formatExpire(provider.subscriptionInfo!.Expire!) }}</div>
-          <div class="flex items-center justify-between">
-            <span>{{ formatUsage(provider.subscriptionInfo) }}</span>
-            <span class="text-base-content/40">更新于 {{ formatDate(provider.updatedAt) }}</span>
-          </div>
-        </div>
-        <div v-else class="px-3 text-xs text-base-content/40">更新于 {{ formatDate(provider.updatedAt) }}</div>
-        <div class="px-3 pb-2 pt-1">
-          <div class="flex flex-wrap gap-1">
-            <span
-              v-for="node in provider.proxies"
-              :key="node.name"
-              class="w-2.5 h-2.5 rounded-full"
-              :class="dotColor(getLatency(node.name))"
-              :title="node.name + ': ' + formatLatency(getLatency(node.name))"
-            ></span>
-          </div>
-        </div>
-
-        <div v-show="expandedProviders.has(provider.name)" class="px-3 pb-3">
-          <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, 180px)">
+        <div v-show="expandedProviders.has(provider.name)" class="px-5 pb-4">
+          <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))">
             <div
               v-for="node in provider.proxies"
               :key="node.name"
-              class="bg-base-100 flex h-[70px] w-[180px] flex-col items-start gap-2 p-2 rounded-md text-xs overflow-hidden"
+              class="bg-base-100 flex h-[70px] min-w-[180px] flex-col items-start gap-2 p-2 rounded-md text-xs overflow-hidden"
             >
               <div class="w-full flex-1 text-sm leading-tight break-all" :title="node.name">
                 {{ node.name }}
@@ -437,7 +467,7 @@ watch(isRunning, (running) => {
                 <button
                   class="shrink-0 cursor-pointer text-xs leading-none px-1.5 py-0.5 rounded"
                   :class="[latencyColor(getLatency(node.name)), { 'loading loading-xs': testingNodes.has(node.name) }]"
-                  @click="handleTestNode($event, node.name, provider.name)"
+                  @click.stop="handleTestNode($event, node.name, provider.name)"
                   title="点击测速"
                 >
                   <template v-if="!testingNodes.has(node.name)">{{ formatLatency(getLatency(node.name)) }}</template>
