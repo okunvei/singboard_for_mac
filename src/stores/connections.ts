@@ -13,7 +13,6 @@ const paused = ref(false)
 const filterText = ref('')
 
 let ws: ReconnectingWebSocket | null = null
-let prevIds = new Set<string>()
 let prevTraffic = new Map<string, { download: number; upload: number }>()
 let refCount = 0
 
@@ -64,7 +63,6 @@ export function useConnectionsStore() {
       }
       prevTraffic = newTraffic
 
-      prevIds = currentIds
       connections.value = data.connections
     })
   }

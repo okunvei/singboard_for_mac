@@ -60,10 +60,6 @@ export async function fetchUrl(url: string): Promise<string> {
   return invoke<string>('fetch_url', { url })
 }
 
-export async function srsMatch(path: string, query: string): Promise<boolean> {
-  return invoke<boolean>('srs_match', { path, query })
-}
-
 export async function srsMatchProvider(
   workingDir: string,
   configPath: string,

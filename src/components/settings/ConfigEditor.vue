@@ -190,14 +190,12 @@ function buildCommentDecorations(view: EditorView) {
       if (lineIdx >= 0) {
         let inStr = false
         let escaped = false
-        let isComment = false
         for (let j = 0; j < text.length - 1; j++) {
           if (escaped) { escaped = false; continue }
           if (text[j] === '\\') { escaped = true; continue }
           if (text[j] === '"') { inStr = !inStr; continue }
           if (!inStr && text[j] === '/' && text[j + 1] === '/') {
             builder.add(line.from + j, line.to, commentMark)
-            isComment = true
             break
           }
         }

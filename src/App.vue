@@ -7,7 +7,7 @@ import ToastHost from '@/components/common/ToastHost.vue'
 import { useConfigStore } from '@/stores/config'
 import { useServiceStore } from '@/stores/service'
 import { useProxiesStore } from '@/stores/proxies'
-import { detectRuntimeFiles, copyToRunningConfig } from '@/bridge/config'
+import { detectRuntimeFiles, copyToRunningConfig, getRemoteConfigDir } from '@/bridge/config'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getIPFromIpipnet, getIPFromIpsb } from '@/api/geoip'
 import {
@@ -146,9 +146,9 @@ function runNetworkAutoTest() {
   }
 
   getIPFromIpipnet().then((res) => {
-    const loc = res.data.location.filter(Boolean)
+    const loc = res.location.filter(Boolean)
     result.chinaIP = {
-      ip: res.data.ip,
+      ip: res.ip,
       location: loc.join(' '),
       locationMasked: loc.length > 0
         ? loc[0] + ' ' + loc.slice(1).map(() => '**').join(' ')
@@ -178,8 +178,28 @@ function runNetworkAutoTest() {
   }
 }
 
+async function syncActiveConfigToRunning() {
+  const activeId = config.value.activeConfigProfileId
+  if (!activeId) return
+  const profile = configProfiles.value.find((p) => p.id === activeId)
+  if (!profile) return
+  try {
+    let sourcePath: string
+    if (profile.type === 'local') {
+      sourcePath = profile.source
+    } else {
+      const dir = await getRemoteConfigDir()
+      sourcePath = `${dir}\\${profile.id}.json`
+    }
+    await copyToRunningConfig(sourcePath)
+  } catch (e) {
+    console.error('Failed to sync active config on startup:', e)
+  }
+}
+
 onMounted(async () => {
   initRuntimePaths()
+  await syncActiveConfigToRunning()
   await loadProxies()
   resumePendingTests()
 })

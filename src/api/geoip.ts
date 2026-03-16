@@ -21,7 +21,7 @@ export async function getIPFromIpipnet() {
   const locMatch = text.match(/来自于[：:]\s*(.+)/)
   const ip = ipMatch?.[1] ?? ''
   const location = locMatch?.[1]?.trim().split(/\s+/).filter(Boolean) ?? []
-  return { data: { ip, location } }
+  return { ip, location }
 }
 
 export async function getIPFromIpsb(): Promise<IPInfo> {

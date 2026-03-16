@@ -71,9 +71,9 @@ async function checkIP() {
 
   try {
     const res = await getIPFromIpipnet()
-    const loc = res.data.location.filter(Boolean)
+    const loc = res.location.filter(Boolean)
     chinaIP.value = {
-      ip: res.data.ip,
+      ip: res.ip,
       location: loc.join(' '),
       locationMasked: loc.length > 0
         ? loc[0] + ' ' + loc.slice(1).map(() => '**').join(' ')

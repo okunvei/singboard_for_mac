@@ -22,20 +22,6 @@ function extractReasonFromData(data: unknown): string | null {
   return null
 }
 
-export function getRequestErrorCode(error: unknown): string {
-  if (axios.isAxiosError(error)) {
-    const status = error.response?.status
-    if (typeof status === 'number') {
-      return `HTTP_${status}`
-    }
-    if (typeof error.code === 'string' && error.code.length > 0) {
-      return error.code
-    }
-    return 'AXIOS_ERROR'
-  }
-  return 'UNKNOWN'
-}
-
 export function getRequestErrorReason(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const dataReason = extractReasonFromData(error.response?.data)

@@ -45,7 +45,7 @@ export function useLogsStore() {
     logs.value = []
   }
 
-  function setLevel(level: string) {
+  function changeLevel(level: string) {
     logLevel.value = level
     start()
   }
@@ -72,6 +72,6 @@ export function useLogsStore() {
     start,
     stop,
     clear,
-    setLevel,
+    changeLevel,
   }
 }

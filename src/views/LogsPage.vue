@@ -9,7 +9,7 @@ const {
   filterText,
   start,
   clear,
-  setLevel,
+  changeLevel,
 } = useLogsStore()
 
 const logContainer = ref<HTMLElement | null>(null)
@@ -61,7 +61,7 @@ onMounted(() => {
         <select
           class="select select-xs select-bordered"
           :value="logLevel"
-          @change="setLevel(($event.target as HTMLSelectElement).value)"
+          @change="changeLevel(($event.target as HTMLSelectElement).value)"
         >
           <option v-for="l in levels" :key="l" :value="l">{{ l }}</option>
         </select>

@@ -7,7 +7,6 @@ import { useProxiesStore } from '@/stores/proxies'
 import {
   startService,
   stopService,
-  restartService,
   installService,
   uninstallService,
   readServiceErrorLog,
@@ -176,7 +175,7 @@ async function loadClashConfig() {
   } catch {}
 }
 
-async function setMode(mode: string) {
+async function changeMode(mode: string) {
   try {
     await patchConfig({ mode } as any)
     await loadClashConfig()
@@ -395,7 +394,7 @@ watch(
         <select
           class="select select-sm select-bordered"
           :value="clashMode"
-          @change="setMode(($event.target as HTMLSelectElement).value)"
+          @change="changeMode(($event.target as HTMLSelectElement).value)"
         >
           <option v-for="mode in clashModeOptions" :key="mode" :value="mode">{{ mode }}</option>
         </select>
