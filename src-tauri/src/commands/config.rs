@@ -1,4 +1,5 @@
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
@@ -288,12 +289,22 @@ pub async fn copy_to_running_config(
 ) -> Result<String, String> {
     let running_config_path = resolve_running_config_path(&app)?;
 
-    let content = tokio::fs::read_to_string(&source_path)
+    let source_content = tokio::fs::read(&source_path)
         .await
         .map_err(|e| format!("Failed to read source config: {}", e))?;
-    tokio::fs::write(&running_config_path, &content)
-        .await
-        .map_err(|e| format!("Failed to write running-config.json: {}", e))?;
+
+    let source_hash: [u8; 32] = Sha256::digest(&source_content).into();
+    let target_hash = match tokio::fs::read(&running_config_path).await {
+        Ok(existing) => Some(<[u8; 32]>::from(Sha256::digest(&existing))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("Failed to read running-config.json: {}", e)),
+    };
+
+    if target_hash.map(|h| h != source_hash).unwrap_or(true) {
+        tokio::fs::write(&running_config_path, &source_content)
+            .await
+            .map_err(|e| format!("Failed to write running-config.json: {}", e))?;
+    }
 
     Ok(normalize_path_for_client(&running_config_path))
 }
