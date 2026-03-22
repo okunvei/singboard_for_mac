@@ -23,6 +23,7 @@ function matchesFilter(c: Connection, q: string): boolean {
     (m.destinationIP || '').toLowerCase().includes(q) ||
     (m.sourceIP || '').toLowerCase().includes(q) ||
     (m.process || '').toLowerCase().includes(q) ||
+    (m.processPath || '').toLowerCase().includes(q) ||
     (c.chains || []).join(' ').toLowerCase().includes(q) ||
     (c.rule || '').toLowerCase().includes(q) ||
     (c.rulePayload || '').toLowerCase().includes(q)

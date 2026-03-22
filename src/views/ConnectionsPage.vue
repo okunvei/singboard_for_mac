@@ -25,6 +25,14 @@ function getHost(conn: any): string {
   return m.host || m.destinationIP || '-'
 }
 
+function getProcess(conn: Connection): string {
+  const m = conn.metadata
+  if (m.process) return m.process
+  if (!m.processPath) return ''
+  const sep = m.processPath.includes('/') ? '/' : '\\'
+  return m.processPath.split(sep).pop() || m.processPath
+}
+
 function openDetail(conn: Connection) {
   selectedConnection.value = conn
   const modal = document.getElementById('conn-detail-modal') as HTMLDialogElement
@@ -236,7 +244,7 @@ onMounted(() => {
               <span v-if="selectedConnection.metadata.sniffHost" class="text-base-content/50">嗅探主机</span>
               <span v-if="selectedConnection.metadata.sniffHost">{{ selectedConnection.metadata.sniffHost }}</span>
               <span class="text-base-content/50">进程</span>
-              <span class="break-all">{{ selectedConnection.metadata.process || '-' }}</span>
+              <span class="break-all">{{ getProcess(selectedConnection) || '-' }}</span>
               <span v-if="selectedConnection.metadata.processPath" class="text-base-content/50">进程路径</span>
               <span v-if="selectedConnection.metadata.processPath" class="break-all">{{ selectedConnection.metadata.processPath }}</span>
             </div>
