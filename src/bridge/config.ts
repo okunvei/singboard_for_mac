@@ -48,6 +48,10 @@ export async function getRemoteConfigDir(): Promise<string> {
   return invoke<string>('get_remote_config_dir')
 }
 
+export async function getRemoteConfigPath(profileId: string): Promise<string> {
+  return invoke<string>('get_remote_config_path', { profileId })
+}
+
 export async function deleteFile(path: string): Promise<void> {
   return invoke('delete_file', { path })
 }

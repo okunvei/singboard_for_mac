@@ -11,9 +11,10 @@ import {
   uninstallService,
   readServiceErrorLog,
 } from '@/bridge/service'
-import { getSingboxVersion, validateSingboxConfig, getRunningConfigPath, getRemoteConfigDir, copyToRunningConfig } from '@/bridge/config'
+import { getSingboxVersion, validateSingboxConfig, getRunningConfigPath, getRemoteConfigPath, copyToRunningConfig } from '@/bridge/config'
 import { open } from '@tauri-apps/plugin-dialog'
 import { patchConfig, fetchConfig } from '@/api'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const {
   config,
@@ -29,6 +30,7 @@ const {
 } = useConfigStore()
 const { serviceStatus, refresh } = useServiceStore()
 const { pushToast } = useToastStore()
+const confirmDialogRef = ref<InstanceType<typeof ConfirmDialog> | null>(null)
 
 const { proxyGroups, loadProxies } = useProxiesStore()
 
@@ -110,7 +112,7 @@ function handleSwitchApi(id: string) {
 function handleSaveActiveApi() {
   const url = activeApiForm.value.url.trim()
   if (!url) {
-    alert('请填写当前 API 地址。')
+    pushToast({ message: '请填写当前 API 地址。', type: 'error' })
     return
   }
   const name = activeApiForm.value.name.trim() || 'API'
@@ -127,7 +129,7 @@ function handleSaveActiveApi() {
 function handleAddApi() {
   const url = newApiForm.value.url.trim()
   if (!url) {
-    alert('请填写新增 API 地址。')
+    pushToast({ message: '请填写新增 API 地址。', type: 'error' })
     return
   }
   const name = newApiForm.value.name.trim() || `API ${clashApis.value.length + 1}`
@@ -140,14 +142,20 @@ function handleAddApi() {
   loadClashConfig()
 }
 
-function handleRemoveActiveApi() {
+async function handleRemoveActiveApi() {
   const current = activeClashApi.value
   if (!current) return
   if (clashApis.value.length <= 1) {
-    alert('至少保留一个 Clash API。')
+    pushToast({ message: '至少保留一个 Clash API。', type: 'error' })
     return
   }
-  if (!confirm(`确定删除 API：${current.name} ?`)) return
+  const confirmed = await confirmDialogRef.value?.show({
+    title: '删除 API',
+    message: `确定删除 API：${current.name} ?`,
+    confirmText: '删除',
+    variant: 'danger',
+  })
+  if (!confirmed) return
   removeClashApi(current.id)
   syncActiveApiForm()
   showEditApiForm.value = false
@@ -198,8 +206,7 @@ async function validateBeforeStart(): Promise<boolean> {
 
     if (profile.type === 'local') return profile.source
 
-    const dir = await getRemoteConfigDir()
-    return `${dir}\\${profile.id}.json`
+    return await getRemoteConfigPath(profile.id)
   }
 
   try {
@@ -360,6 +367,7 @@ watch(
 <template>
   <div class="space-y-6 max-w-2xl">
     <h1 class="text-xl font-bold">设置</h1>
+    <ConfirmDialog ref="confirmDialogRef" />
 
     <div class="bg-base-200 rounded-lg p-4 space-y-3">
       <h2 class="font-semibold text-sm">服务控制</h2>

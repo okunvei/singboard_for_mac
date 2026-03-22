@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useConnectionsStore } from '@/stores/connections'
+import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
 import type { Connection } from '@/types'
 
 const {
   filteredConnections,
+  filteredClosedConnections,
   closedConnections,
   downloadTotal,
   uploadTotal,
@@ -17,45 +19,6 @@ const {
 
 const activeTab = ref<'active' | 'closed'>('active')
 const selectedConnection = ref<Connection | null>(null)
-
-const filteredClosedConnections = computed(() => {
-  if (!filterText.value) return closedConnections.value
-  const q = filterText.value.toLowerCase()
-  return closedConnections.value.filter((c) => {
-    const m = c.metadata
-    return (
-      (m.host || '').toLowerCase().includes(q) ||
-      (m.destinationIP || '').toLowerCase().includes(q) ||
-      (m.sourceIP || '').toLowerCase().includes(q) ||
-      (m.process || '').toLowerCase().includes(q) ||
-      (c.chains || []).join(' ').toLowerCase().includes(q) ||
-      (c.rule || '').toLowerCase().includes(q) ||
-      (c.rulePayload || '').toLowerCase().includes(q)
-    )
-  })
-})
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-function formatSpeed(bytes: number): string {
-  return formatBytes(bytes) + '/s'
-}
-
-function formatDuration(start: string): string {
-  const ms = Date.now() - new Date(start).getTime()
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return s + 's'
-  const m = Math.floor(s / 60)
-  if (m < 60) return m + 'm ' + (s % 60) + 's'
-  const h = Math.floor(m / 60)
-  return h + 'h ' + (m % 60) + 'm'
-}
 
 function getHost(conn: any): string {
   const m = conn.metadata
@@ -126,9 +89,7 @@ onMounted(() => {
       <table class="table table-xs table-pin-rows">
         <thead>
           <tr class="bg-base-200 border-b border-base-content/20">
-            <th>类型</th>
-            <th>主机</th>
-            <th>进程</th>
+            <th class="sticky left-0 z-20 bg-base-200">主机</th>
             <th>规则</th>
             <th>链路</th>
             <th class="text-right">下载</th>
@@ -146,16 +107,11 @@ onMounted(() => {
             class="hover:bg-base-200/50 cursor-pointer"
             @click="openDetail(conn)"
           >
-            <td class="whitespace-nowrap">
-              <span class="text-xs leading-none px-1.5 py-0.5 rounded" :class="conn.metadata.network === 'tcp' ? 'bg-info/15 text-info' : 'bg-accent/15 text-accent'">
+            <td class="sticky left-0 z-10 bg-base-100 whitespace-nowrap" :title="getHost(conn)">
+              <span class="text-xs leading-none px-1.5 py-0.5 rounded mr-1.5 inline-block" :class="conn.metadata.network === 'tcp' ? 'bg-info/15 text-info' : 'bg-accent/15 text-accent'">
                 {{ conn.metadata.network }}
               </span>
-            </td>
-            <td class="max-w-xs truncate" :title="getHost(conn)">
-              {{ getHost(conn) }}
-            </td>
-            <td class="text-base-content/60 whitespace-nowrap" :title="conn.metadata.process">
-              {{ conn.metadata.process || '-' }}
+              <span class="truncate inline">{{ getHost(conn) }}</span>
             </td>
             <td class="text-xs text-base-content/60 max-w-xl truncate" :title="conn.rule">{{ conn.rule }}</td>
             <td class="text-xs text-base-content/60 max-w-xl truncate" :title="formatChains(conn.chains)">
@@ -191,9 +147,7 @@ onMounted(() => {
       <table class="table table-xs table-pin-rows">
         <thead>
           <tr class="bg-base-200 border-b border-base-content/20">
-            <th>类型</th>
-            <th>主机</th>
-            <th>进程</th>
+            <th class="sticky left-0 z-20 bg-base-200">主机</th>
             <th>规则</th>
             <th>链路</th>
             <th class="text-right">下载</th>
@@ -210,16 +164,11 @@ onMounted(() => {
             class="hover:bg-base-200/50 opacity-60 cursor-pointer"
             @click="openDetail(conn)"
           >
-            <td class="whitespace-nowrap">
-              <span class="text-xs leading-none px-1.5 py-0.5 rounded" :class="conn.metadata.network === 'tcp' ? 'bg-info/15 text-info' : 'bg-accent/15 text-accent'">
+            <td class="sticky left-0 z-10 bg-base-100 whitespace-nowrap" :title="getHost(conn)">
+              <span class="text-xs leading-none px-1.5 py-0.5 rounded mr-1.5 inline-block" :class="conn.metadata.network === 'tcp' ? 'bg-info/15 text-info' : 'bg-accent/15 text-accent'">
                 {{ conn.metadata.network }}
               </span>
-            </td>
-            <td class="max-w-xs truncate" :title="getHost(conn)">
-              {{ getHost(conn) }}
-            </td>
-            <td class="text-base-content/60 whitespace-nowrap" :title="conn.metadata.process">
-              {{ conn.metadata.process || '-' }}
+              <span class="truncate inline">{{ getHost(conn) }}</span>
             </td>
             <td class="text-xs text-base-content/60 max-w-xl truncate" :title="conn.rule">{{ conn.rule }}</td>
             <td class="text-xs text-base-content/60 max-w-xl truncate" :title="formatChains(conn.chains)">

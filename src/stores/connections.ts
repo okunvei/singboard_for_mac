@@ -16,21 +16,29 @@ let ws: ReconnectingWebSocket | null = null
 let prevTraffic = new Map<string, { download: number; upload: number }>()
 let refCount = 0
 
+function matchesFilter(c: Connection, q: string): boolean {
+  const m = c.metadata
+  return (
+    (m.host || '').toLowerCase().includes(q) ||
+    (m.destinationIP || '').toLowerCase().includes(q) ||
+    (m.sourceIP || '').toLowerCase().includes(q) ||
+    (m.process || '').toLowerCase().includes(q) ||
+    (c.chains || []).join(' ').toLowerCase().includes(q) ||
+    (c.rule || '').toLowerCase().includes(q) ||
+    (c.rulePayload || '').toLowerCase().includes(q)
+  )
+}
+
 const filteredConnections = computed(() => {
   if (!filterText.value) return connections.value
   const q = filterText.value.toLowerCase()
-  return connections.value.filter((c) => {
-    const m = c.metadata
-    return (
-      (m.host || '').toLowerCase().includes(q) ||
-      (m.destinationIP || '').toLowerCase().includes(q) ||
-      (m.sourceIP || '').toLowerCase().includes(q) ||
-      (m.process || '').toLowerCase().includes(q) ||
-      (c.chains || []).join(' ').toLowerCase().includes(q) ||
-      (c.rule || '').toLowerCase().includes(q) ||
-      (c.rulePayload || '').toLowerCase().includes(q)
-    )
-  })
+  return connections.value.filter((c) => matchesFilter(c, q))
+})
+
+const filteredClosedConnections = computed(() => {
+  if (!filterText.value) return closedConnections.value
+  const q = filterText.value.toLowerCase()
+  return closedConnections.value.filter((c) => matchesFilter(c, q))
 })
 
 export function useConnectionsStore() {
@@ -101,6 +109,7 @@ export function useConnectionsStore() {
     connections,
     filteredConnections,
     closedConnections,
+    filteredClosedConnections,
     downloadTotal,
     uploadTotal,
     paused,

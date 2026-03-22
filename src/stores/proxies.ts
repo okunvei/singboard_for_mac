@@ -102,7 +102,21 @@ function snapshotLatencyHistoryMap(): Record<string, LatencyHistory[]> {
   return map
 }
 
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+
 function persistLatencyHistoryMap() {
+  if (persistTimer) return
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    saveLatencyHistoryMap(snapshotLatencyHistoryMap())
+  }, 500)
+}
+
+function flushLatencyHistoryMap() {
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistTimer = null
+  }
   saveLatencyHistoryMap(snapshotLatencyHistoryMap())
 }
 
@@ -341,6 +355,7 @@ export function useProxiesStore() {
       } catch { }
     }
 
+    flushLatencyHistoryMap()
     await loadProxies()
   }
 
@@ -356,6 +371,7 @@ export function useProxiesStore() {
     }
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT, names.length) }, () => run())
     await Promise.all(workers)
+    flushLatencyHistoryMap()
     savePendingQueue([])
   }
 

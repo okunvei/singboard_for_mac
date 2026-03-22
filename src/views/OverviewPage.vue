@@ -4,21 +4,10 @@ import { useOverviewStore } from '@/stores/overview'
 import { useConnectionsStore } from '@/stores/connections'
 import NetworkInfo from '@/components/overview/NetworkInfo.vue'
 import TopologyChart from '@/components/overview/TopologyChart.vue'
+import { formatBytes, formatSpeed } from '@/utils/format'
 
 const { currentTraffic, memory, start: startOverview } = useOverviewStore()
 const { connections, start: startConnections } = useConnectionsStore()
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-function formatSpeed(bytes: number): string {
-  return formatBytes(bytes) + '/s'
-}
 
 const memoryUsage = computed(() => formatBytes(memory.value.inuse))
 

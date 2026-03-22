@@ -264,6 +264,16 @@ pub async fn get_remote_config_dir(
     Ok(normalize_path_for_client(&dir))
 }
 
+#[tauri::command]
+pub async fn get_remote_config_path(
+    app: tauri::AppHandle,
+    profile_id: String,
+) -> Result<String, String> {
+    let dir = resolve_remote_config_dir(&app)?;
+    let path = dir.join(format!("{}.json", profile_id));
+    Ok(normalize_path_for_client(&path))
+}
+
 fn resolve_running_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;

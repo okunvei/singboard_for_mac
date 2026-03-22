@@ -10,6 +10,7 @@ import {
 import type { ProxyProvider } from '@/types'
 import { getRequestErrorReason } from '@/utils/requestError'
 import { useToastStore } from '@/stores/toast'
+import { formatSpeed, formatBytes, formatLatency, formatDate, latencyColor, dotColor } from '@/utils/format'
 
 const {
   proxyGroups,
@@ -31,24 +32,21 @@ const { pushToast } = useToastStore()
 const { serviceStatus } = useServiceStore()
 const { connections, start: startConnections } = useConnectionsStore()
 
-function getGroupSpeed(groupName: string): { down: number; up: number } {
-  let down = 0
-  let up = 0
+const groupSpeedMap = computed(() => {
+  const map: Record<string, { down: number; up: number }> = {}
   for (const conn of connections.value) {
-    if (conn.chains?.includes(groupName)) {
-      down += conn.downloadSpeed ?? 0
-      up += conn.uploadSpeed ?? 0
+    if (!conn.chains) continue
+    for (const chain of conn.chains) {
+      if (!map[chain]) map[chain] = { down: 0, up: 0 }
+      map[chain].down += conn.downloadSpeed ?? 0
+      map[chain].up += conn.uploadSpeed ?? 0
     }
   }
-  return { down, up }
-}
+  return map
+})
 
-function formatSpeed(bytes: number): string {
-  if (bytes <= 0) return '0 B/s'
-  const k = 1024
-  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+function getGroupSpeed(groupName: string): { down: number; up: number } {
+  return groupSpeedMap.value[groupName] ?? { down: 0, up: 0 }
 }
 
 const isRunning = computed(() => serviceStatus.value.state === 'running')
@@ -83,18 +81,6 @@ function toggleGroup(name: string) {
   } else {
     expandedGroups.value.add(name)
   }
-}
-
-function latencyColor(delay: number): string {
-  if (delay === 0) return 'bg-base-content/10 text-base-content/50'
-  if (delay < 300) return 'bg-success/15 text-success'
-  if (delay < 800) return 'bg-amber-500/15 text-amber-600'
-  return 'bg-error/15 text-error'
-}
-
-function formatLatency(delay: number): string {
-  if (delay === 0) return 'N/A'
-  return delay + 'ms'
 }
 
 function typeFormatter(type: string): string {
@@ -190,33 +176,9 @@ async function handleHealthCheck(name: string) {
   healthCheckingProvider.value = null
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-function formatDate(dateStr: string): string {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
-  if (diff < 60000) return '刚刚'
-  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前'
-  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前'
-  return Math.floor(diff / 86400000) + ' 天前'
-}
-
 function formatExpire(ts: number): string {
   if (!ts) return '无期限'
   return new Date(ts * 1000).toLocaleDateString()
-}
-
-function dotColor(delay: number): string {
-  if (delay === 0) return 'bg-base-content/20'
-  if (delay < 300) return 'bg-success'
-  if (delay < 800) return 'bg-amber-500'
-  return 'bg-error'
 }
 
 function testedCount(proxies: ProxyProvider['proxies']): number {

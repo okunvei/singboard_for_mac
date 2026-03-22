@@ -2,10 +2,11 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { useToastStore } from '@/stores/toast'
-import { copyToRunningConfig, writeSingboxConfig, fetchUrl, validateSingboxConfig, getRemoteConfigDir, deleteFile } from '@/bridge/config'
-import { open, ask } from '@tauri-apps/plugin-dialog'
+import { copyToRunningConfig, writeSingboxConfig, fetchUrl, validateSingboxConfig, getRemoteConfigPath, deleteFile } from '@/bridge/config'
+import { open } from '@tauri-apps/plugin-dialog'
 import ConfigEditor from '@/components/settings/ConfigEditor.vue'
 import ConfigProfileCard from '@/components/config/ConfigProfileCard.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ConfigProfile } from '@/types'
 
 const {
@@ -18,6 +19,7 @@ const {
   updateConfigProfile,
 } = useConfigStore()
 const { pushToast } = useToastStore()
+const confirmDialogRef = ref<InstanceType<typeof ConfirmDialog> | null>(null)
 
 const singboxPath = computed(() => config.value.singboxPath)
 const workingDir = computed(() => config.value.workingDir)
@@ -28,11 +30,13 @@ const editingProfileName = computed(() => {
   const p = configProfiles.value.find((p) => p.id === editingProfileId.value)
   return p?.name ?? ''
 })
-const editingConfigPath = computed(() => {
-  const p = configProfiles.value.find((p) => p.id === editingProfileId.value)
-  if (!p) return ''
-  return getProfileConfigPath(p)
-})
+const editingConfigPath = ref('')
+watch(editingProfileId, async (id) => {
+  if (!id) { editingConfigPath.value = ''; return }
+  const p = configProfiles.value.find((p) => p.id === id)
+  if (!p) { editingConfigPath.value = ''; return }
+  editingConfigPath.value = await getProfileConfigPath(p)
+}, { immediate: true })
 
 // 对话框状态
 const showAddLocalDialog = ref(false)
@@ -47,9 +51,6 @@ const addingRemote = ref(false)
 const selectingId = ref('')
 const updatingId = ref('')
 const deletingId = ref('')
-
-// 远程配置目录
-const remoteConfigDir = ref('')
 
 // 自动更新定时器
 const autoUpdateTimers = new Map<string, ReturnType<typeof setInterval>>()
@@ -68,12 +69,7 @@ function setupAutoUpdateTimers() {
   }
 }
 
-onMounted(async () => {
-  try {
-    remoteConfigDir.value = await getRemoteConfigDir()
-  } catch (e) {
-    console.error('Failed to get remote config dir:', e)
-  }
+onMounted(() => {
   setupAutoUpdateTimers()
 })
 
@@ -84,10 +80,9 @@ onUnmounted(() => {
 
 watch(configProfiles, setupAutoUpdateTimers, { deep: true })
 
-function getProfileConfigPath(profile: ConfigProfile): string {
+async function getProfileConfigPath(profile: ConfigProfile): Promise<string> {
   if (profile.type === 'local') return profile.source
-  const dir = remoteConfigDir.value
-  return `${dir}\\${profile.id}.json`
+  return await getRemoteConfigPath(profile.id)
 }
 
 async function validateAndCopyToRunning(configFilePath: string): Promise<boolean> {
@@ -122,7 +117,7 @@ async function onConfigSaved() {
 
   // 如果是激活配置，校验后复制到 running-config
   if (profile.id === activeConfigProfileId.value) {
-    const ok = await validateAndCopyToRunning(getProfileConfigPath(profile))
+    const ok = await validateAndCopyToRunning(await getProfileConfigPath(profile))
     if (ok) {
       pushToast({ message: '配置已保存并更新到运行配置', type: 'info' })
     }
@@ -137,7 +132,7 @@ async function selectProfile(id: string) {
 
   selectingId.value = id
   try {
-    const ok = await validateAndCopyToRunning(getProfileConfigPath(profile))
+    const ok = await validateAndCopyToRunning(await getProfileConfigPath(profile))
     if (ok) {
       setActiveConfigProfile(id)
       pushToast({ message: `已选用配置「${profile.name}」，重启核心后生效`, type: 'info' })
@@ -157,13 +152,18 @@ async function deleteProfile(id: string) {
     ? `确定删除配置「${profile.name}」？\n同时会删除已下载的远程配置文件。`
     : `确定删除配置「${profile.name}」？\n仅从面板移除，不会删除本地源文件。`
 
-  const confirmed = await ask(msg, { title: '删除配置', kind: 'warning' })
+  const confirmed = await confirmDialogRef.value?.show({
+    title: '删除配置',
+    message: msg,
+    confirmText: '删除',
+    variant: 'danger',
+  })
   if (!confirmed) return
 
   deletingId.value = id
   if (profile.type === 'remote') {
     try {
-      await deleteFile(getProfileConfigPath(profile))
+      await deleteFile(await getProfileConfigPath(profile))
     } catch { /* 文件不存在也无所谓 */ }
   }
   removeConfigProfile(id)
@@ -178,7 +178,7 @@ async function updateRemoteProfile(id: string) {
   updatingId.value = id
   try {
     const content = await fetchUrl(profile.source)
-    const destPath = getProfileConfigPath(profile)
+    const destPath = await getProfileConfigPath(profile)
     await writeSingboxConfig(destPath, content)
     updateConfigProfile(id, { lastUpdated: new Date().toISOString() })
 
@@ -287,7 +287,7 @@ async function handleAddRemote() {
 
     // 下载远程配置并保存
     const content = await fetchUrl(url)
-    const destPath = getProfileConfigPath(profile)
+    const destPath = await getProfileConfigPath(profile)
     await writeSingboxConfig(destPath, content)
 
     showAddRemoteDialog.value = false
@@ -302,6 +302,7 @@ async function handleAddRemote() {
 
 <template>
   <div class="flex flex-col h-full min-h-0 gap-3">
+    <ConfirmDialog ref="confirmDialogRef" />
     <!-- 标题栏 -->
     <div class="flex items-center justify-between shrink-0">
       <h1 class="text-xl font-bold" v-if="!editingProfileId">配置</h1>

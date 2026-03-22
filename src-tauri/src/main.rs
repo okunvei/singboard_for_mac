@@ -50,6 +50,7 @@ fn run_gui() {
             singboard_lib::commands::config::get_running_config_path,
             singboard_lib::commands::config::copy_to_running_config,
             singboard_lib::commands::config::get_remote_config_dir,
+            singboard_lib::commands::config::get_remote_config_path,
             singboard_lib::commands::config::delete_file,
             singboard_lib::commands::binary::get_singbox_version,
             singboard_lib::commands::srs::srs_match,
