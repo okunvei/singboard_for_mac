@@ -55,6 +55,7 @@ fn run_gui() {
             singboard_lib::commands::binary::get_singbox_version,
             singboard_lib::commands::srs::srs_match,
             singboard_lib::commands::srs::srs_match_provider,
+            singboard_lib::commands::srs::srs_list_provider,
             singboard_lib::commands::network::fetch_url,
             singboard_lib::commands::network::http_ping,
         ])

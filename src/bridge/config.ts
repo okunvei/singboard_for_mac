@@ -64,6 +64,15 @@ export async function fetchUrl(url: string): Promise<string> {
   return invoke<string>('fetch_url', { url })
 }
 
+export async function srsListProvider(
+  workingDir: string,
+  configPath: string,
+  singboxPath: string,
+  tag: string,
+): Promise<Array<{ type: string; value: string }>> {
+  return invoke<Array<{ type: string; value: string }>>('srs_list_provider', { workingDir, configPath, singboxPath, tag })
+}
+
 export async function srsMatchProvider(
   workingDir: string,
   configPath: string,

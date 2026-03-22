@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, nextTick } from 'vue'
 
 import { useRulesStore } from '@/stores/rules'
 import { fetchRuleProviders, updateRuleProvider } from '@/api'
@@ -8,7 +8,7 @@ import { getRequestErrorReason } from '@/utils/requestError'
 import { useToastStore } from '@/stores/toast'
 import { useConfigStore } from '@/stores/config'
 import { useServiceStore } from '@/stores/service'
-import { srsMatchProvider, getRunningConfigPath } from '@/bridge/config'
+import { srsMatchProvider, srsListProvider, getRunningConfigPath } from '@/bridge/config'
 
 const { filteredRules, loading, filterText, loadRules } = useRulesStore()
 const { serviceStatus } = useServiceStore()
@@ -124,6 +124,176 @@ async function handleUpdateAll() {
   await loadProviders()
   await loadRules()
   updatingAll.value = false
+}
+
+// ---- 规则详情弹窗 ----
+const detailProvider = ref<RuleProvider | null>(null)
+const detailLoading = ref(false)
+const detailError = ref('')
+const detailRules = ref<Array<{ type: string; value: string }>>([])
+const detailFilterText = ref('')
+
+// 弹窗搜索：调用 Rust 端 srsMatchProvider 做精确匹配
+const detailMatchResult = ref<boolean | null>(null) // null=未搜索, true=匹配, false=未匹配
+const detailMatchSearching = ref(false)
+let detailSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+const filteredDetailRules = ref<Array<{ type: string; value: string }>>([])
+let filterTimer: ReturnType<typeof setTimeout> | null = null
+
+function parseIPv4(ip: string): number | null {
+  const parts = ip.split('.')
+  if (parts.length !== 4) return null
+  let n = 0
+  for (const p of parts) {
+    const v = Number(p)
+    if (!Number.isInteger(v) || v < 0 || v > 255) return null
+    n = (n << 8) | v
+  }
+  return n >>> 0
+}
+
+function runDetailFilter() {
+  const q = detailFilterText.value.trim().toLowerCase()
+  if (!q) {
+    filteredDetailRules.value = detailRules.value
+    return
+  }
+  const qIPv4 = parseIPv4(q)
+  filteredDetailRules.value = detailRules.value.filter((r) => {
+    // 文本包含
+    if (r.value.toLowerCase().includes(q) || r.type.toLowerCase().includes(q)) return true
+    // IP CIDR 语义匹配
+    if (qIPv4 !== null && (r.type === 'ip_cidr' || r.type === 'source_ip_cidr')) {
+      const [network, prefixStr] = r.value.split('/')
+      if (!prefixStr) return false
+      const prefix = Number(prefixStr)
+      const netNum = parseIPv4(network)
+      if (netNum === null || prefix < 0 || prefix > 32) return false
+      const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0
+      return (qIPv4 & mask) === (netNum & mask)
+    }
+    // 域名语义匹配
+    if (qIPv4 === null) {
+      const val = r.value.toLowerCase()
+      if (r.type === 'domain') return q === val
+      if (r.type === 'domain_suffix') return q.endsWith(val) || q.endsWith('.' + val.replace(/^\./, ''))
+      if (r.type === 'domain_keyword') return q.includes(val)
+    }
+    return false
+  })
+}
+
+watch(detailFilterText, () => {
+  if (filterTimer) clearTimeout(filterTimer)
+  filterTimer = setTimeout(runDetailFilter, 300)
+})
+
+watch(detailRules, () => {
+  filteredDetailRules.value = detailRules.value
+})
+
+async function searchInDetail() {
+  const q = detailFilterText.value.trim()
+  const provider = detailProvider.value
+  if (!q || !provider) {
+    detailMatchResult.value = null
+    return
+  }
+  detailMatchSearching.value = true
+  detailMatchResult.value = null
+
+  let configPath = ''
+  try { configPath = await getRunningConfigPath() } catch {}
+
+  try {
+    detailMatchResult.value = await srsMatchProvider(
+      config.value.workingDir ?? '',
+      configPath,
+      config.value.singboxPath ?? '',
+      provider.name,
+      q,
+    )
+  } catch {
+    detailMatchResult.value = null
+  } finally {
+    detailMatchSearching.value = false
+  }
+}
+
+watch(detailFilterText, (val) => {
+  if (detailSearchTimer) clearTimeout(detailSearchTimer)
+  if (!val.trim()) {
+    detailMatchResult.value = null
+    detailMatchSearching.value = false
+    return
+  }
+  detailSearchTimer = setTimeout(searchInDetail, 500)
+})
+
+// 虚拟滚动
+const ROW_HEIGHT = 28
+const OVERSCAN = 10
+const detailScrollTop = ref(0)
+const detailContainerHeight = ref(400)
+const detailScrollRef = ref<HTMLElement | null>(null)
+
+const virtualSlice = computed(() => {
+  const items = filteredDetailRules.value
+  const total = items.length
+  const startIdx = Math.max(0, Math.floor(detailScrollTop.value / ROW_HEIGHT) - OVERSCAN)
+  const visibleCount = Math.ceil(detailContainerHeight.value / ROW_HEIGHT) + OVERSCAN * 2
+  const endIdx = Math.min(total, startIdx + visibleCount)
+  return {
+    items: items.slice(startIdx, endIdx),
+    startIdx,
+    totalHeight: total * ROW_HEIGHT,
+    offsetY: startIdx * ROW_HEIGHT,
+  }
+})
+
+function onDetailScroll(e: Event) {
+  const el = e.target as HTMLElement
+  detailScrollTop.value = el.scrollTop
+}
+
+async function openProviderDetail(provider: RuleProvider) {
+  detailProvider.value = provider
+  detailLoading.value = true
+  detailError.value = ''
+  detailRules.value = []
+  detailFilterText.value = ''
+
+  let configPath = ''
+  try {
+    configPath = await getRunningConfigPath()
+  } catch {}
+
+  try {
+    const rules = await srsListProvider(
+      config.value.workingDir ?? '',
+      configPath,
+      config.value.singboxPath ?? '',
+      provider.name,
+    )
+    detailRules.value = rules
+  } catch (e: any) {
+    detailError.value = e?.message || String(e)
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function closeProviderDetail() {
+  detailProvider.value = null
+  detailRules.value = []
+  detailFilterText.value = ''
+  detailError.value = ''
+  detailScrollTop.value = 0
+  detailMatchResult.value = null
+  detailMatchSearching.value = false
+  if (detailSearchTimer) { clearTimeout(detailSearchTimer); detailSearchTimer = null }
+  if (filterTimer) { clearTimeout(filterTimer); filterTimer = null }
 }
 
 function formatDate(dateStr: string): string {
@@ -266,7 +436,9 @@ watch(isRunning, (running) => {
       <div
         v-for="(provider, i) in displayedProviders"
         :key="provider.name"
-        class="bg-base-200 rounded-lg px-3 py-2 flex items-center justify-between"
+        class="bg-base-200 rounded-lg px-3 py-2 flex items-center justify-between transition-colors"
+        :class="provider.vehicleType !== 'Inline' && provider.behavior !== 'SOURCE' ? 'cursor-pointer hover:bg-base-300/30' : ''"
+        @click="provider.vehicleType !== 'Inline' && provider.behavior !== 'SOURCE' && openProviderDetail(provider)"
       >
         <div class="flex items-center gap-2 min-w-0">
           <span class="text-xs text-base-content/30 w-5 shrink-0">{{ i + 1 }}</span>
@@ -293,7 +465,7 @@ watch(isRunning, (running) => {
             v-if="provider.vehicleType !== 'Inline'"
             class="btn btn-ghost btn-xs btn-circle"
             :class="{ 'loading': updatingProvider === provider.name }"
-            @click="handleUpdateProvider(provider.name)"
+            @click.stop="handleUpdateProvider(provider.name)"
             title="更新"
           >
             <svg v-if="updatingProvider !== provider.name" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
@@ -304,5 +476,93 @@ watch(isRunning, (running) => {
       </div>
     </div>
     </template>
+  </div>
+
+  <!-- 规则详情弹窗 -->
+  <div
+    v-if="detailProvider"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    @click.self="closeProviderDetail"
+  >
+    <div class="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg bg-base-100 shadow-xl">
+      <div class="flex items-start justify-between px-5 pt-4 pb-3 shrink-0">
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-baseline gap-2">
+            <span class="font-semibold text-base">{{ detailProvider.name }}</span>
+            <span class="text-xs text-base-content/50">{{ detailProvider.ruleCount }} 条规则</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span v-if="detailProvider.behavior" class="text-xs leading-none px-1.5 py-0.5 rounded bg-base-content/10 text-base-content/60">{{ detailProvider.behavior }}</span>
+            <span v-if="detailProvider.vehicleType" class="text-xs leading-none px-1.5 py-0.5 rounded border border-base-content/20 text-base-content/60">{{ detailProvider.vehicleType }}</span>
+            <span class="text-xs text-base-content/40">{{ formatDate(detailProvider.updatedAt) }}</span>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-circle btn-ghost" @click="closeProviderDetail">✕</button>
+      </div>
+
+      <div class="px-5 pb-2 shrink-0 flex items-center gap-2">
+        <div class="relative flex-1">
+          <input
+            v-model="detailFilterText"
+            type="text"
+            placeholder="搜索规则内容..."
+            class="input input-sm input-bordered w-full"
+          />
+          <span
+            v-if="detailMatchSearching"
+            class="loading loading-spinner loading-xs absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40"
+          ></span>
+        </div>
+        <span
+          v-if="detailFilterText.trim() && !detailMatchSearching && detailMatchResult !== null"
+          class="text-xs leading-none px-2 py-1 rounded shrink-0"
+          :class="detailMatchResult ? 'bg-success/15 text-success' : 'bg-base-content/10 text-base-content/40'"
+        >{{ detailMatchResult ? '匹配' : '未匹配' }}</span>
+      </div>
+
+      <div class="flex-1 flex flex-col px-5 pb-4 min-h-0">
+        <div v-if="detailLoading" class="flex justify-center py-10">
+          <span class="loading loading-spinner loading-md"></span>
+        </div>
+        <div v-else-if="detailError" class="text-sm text-error py-4">{{ detailError }}</div>
+        <template v-else>
+          <div class="flex text-xs font-semibold text-base-content/60 bg-base-200 rounded-t px-2 shrink-0" :style="{ height: ROW_HEIGHT + 'px', lineHeight: ROW_HEIGHT + 'px' }">
+            <span class="w-12 shrink-0">#</span>
+            <span class="w-28 shrink-0">类型</span>
+            <span class="flex-1">内容</span>
+          </div>
+          <div
+            ref="detailScrollRef"
+            class="flex-1 overflow-auto min-h-0"
+            @scroll="onDetailScroll"
+          >
+            <div :style="{ height: virtualSlice.totalHeight + 'px', position: 'relative' }">
+              <div :style="{ transform: `translateY(${virtualSlice.offsetY}px)` }">
+                <div
+                  v-for="(rule, j) in virtualSlice.items"
+                  :key="virtualSlice.startIdx + j"
+                  class="flex items-center px-2 text-xs hover:bg-base-200/50"
+                  :style="{ height: ROW_HEIGHT + 'px' }"
+                >
+                  <span class="w-12 shrink-0 text-base-content/30">{{ virtualSlice.startIdx + j + 1 }}</span>
+                  <span class="w-28 shrink-0">
+                    <span class="leading-none px-1.5 py-0.5 rounded bg-base-content/10 text-base-content/60 whitespace-nowrap">{{ rule.type }}</span>
+                  </span>
+                  <span class="flex-1 truncate" :title="rule.value">{{ rule.value }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="detailRules.length > 0" class="text-xs text-base-content/40 pt-2 shrink-0">
+            <template v-if="detailFilterText.trim()">
+              显示 {{ filteredDetailRules.length }} / 共 {{ detailRules.length }} 条
+            </template>
+            <template v-else>
+              共 {{ detailRules.length }} 条
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
   </div>
 </template>

@@ -1,6 +1,7 @@
 use flate2::read::ZlibDecoder;
+use serde::Serialize;
 use std::io::{self, Cursor, Read};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -1032,6 +1033,481 @@ pub fn srs_match_cache(cache_path: String, tag: String, query: String) -> Result
     // Step 4: match query against the .srs content
     let q = parse_query(&query);
     srs_match_bytes(&srs_content, &q)
+}
+
+// ---- rule enumeration ----
+
+#[derive(Serialize, Clone)]
+pub struct RuleEntry {
+    #[serde(rename = "type")]
+    pub rule_type: String,
+    pub value: String,
+}
+
+impl SuccinctSet {
+    /// DFS traverse the LOUDS trie and collect all stored domains.
+    fn enumerate(&self) -> Vec<(String, String)> {
+        const PREFIX: u8 = b'\r';
+        const ROOT: u8 = b'\n';
+
+        let mut results = Vec::new();
+        // Stack: (node_id, bm_idx, path_so_far_reversed, from_root)
+        let mut stack: Vec<(usize, usize, Vec<u8>, bool)> = vec![(0, 0, Vec::new(), false)];
+
+        while let Some((node_id, start_bm_idx, path, from_root)) = stack.pop() {
+            // First scan children to check for ROOT/PREFIX labels
+            let mut has_suffix_marker = false;
+            let mut bm_idx = start_bm_idx;
+            loop {
+                if get_bit(&self.label_bitmap, bm_idx) {
+                    break;
+                }
+                let li = bm_idx.saturating_sub(node_id);
+                if li >= self.labels.len() {
+                    break;
+                }
+                let lbl = self.labels[li];
+                if lbl == PREFIX || lbl == ROOT {
+                    has_suffix_marker = true;
+                    break;
+                }
+                bm_idx += 1;
+            }
+
+            // Emit entry for this node
+            if !path.is_empty() {
+                if has_suffix_marker {
+                    // Has ROOT/PREFIX child → domain_suffix
+                    let suffix: String = path.iter().rev().map(|&b| b as char).collect();
+                    results.push(("domain_suffix".to_string(), suffix));
+                } else if !from_root && get_bit(&self.leaves, node_id) {
+                    // Pure leaf without suffix marker → domain
+                    let domain: String = path.iter().rev().map(|&b| b as char).collect();
+                    results.push(("domain".to_string(), domain));
+                }
+            }
+
+            // Iterate children and recurse
+            bm_idx = start_bm_idx;
+            loop {
+                if get_bit(&self.label_bitmap, bm_idx) {
+                    break;
+                }
+                let li = bm_idx.saturating_sub(node_id);
+                if li >= self.labels.len() {
+                    break;
+                }
+                let lbl = self.labels[li];
+
+                if lbl == PREFIX {
+                    // Already handled above
+                } else if lbl == ROOT {
+                    // Recurse into ROOT child for deeper entries
+                    let child_node = count_zeros(&self.label_bitmap, bm_idx + 1);
+                    if child_node > 0 {
+                        let child_bm = select_ith_one(&self.label_bitmap, child_node - 1) + 1;
+                        stack.push((child_node, child_bm, path.clone(), true));
+                    }
+                } else {
+                    // Regular character - recurse
+                    let child_node = count_zeros(&self.label_bitmap, bm_idx + 1);
+                    if child_node > 0 {
+                        let child_bm = select_ith_one(&self.label_bitmap, child_node - 1) + 1;
+                        let mut child_path = path.clone();
+                        child_path.push(lbl);
+                        stack.push((child_node, child_bm, child_path, false));
+                    }
+                }
+
+                bm_idx += 1;
+            }
+        }
+
+        results
+    }
+}
+
+impl AdGuardMatcher {
+    fn enumerate(&self) -> Vec<(String, String)> {
+        // AdGuard trie is similar but more complex; fall back to reporting it as opaque
+        let mut results = self.set.enumerate();
+        for r in &mut results {
+            if r.0 == "domain" {
+                r.0 = "domain".to_string();
+            }
+        }
+        results
+    }
+}
+
+fn range_to_cidrs_v4(from: u32, to: u32) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut start = from;
+    while start <= to {
+        let mut prefix_len = 32u32;
+        while prefix_len > 0 {
+            let mask = !((1u64 << (32 - prefix_len + 1)) - 1) as u32;
+            let network = start & mask;
+            let broadcast = network | !mask;
+            if network == start && broadcast <= to {
+                prefix_len -= 1;
+            } else {
+                break;
+            }
+        }
+        prefix_len += if prefix_len < 32 { 1 } else { 0 };
+        // Clamp
+        if prefix_len > 32 {
+            prefix_len = 32;
+        }
+        let mask = if prefix_len == 0 { 0 } else { !((1u64 << (32 - prefix_len)) - 1) as u32 };
+        let broadcast = start | !mask;
+        let ip = Ipv4Addr::from(start);
+        results.push(format!("{}/{}", ip, prefix_len));
+        if broadcast == u32::MAX {
+            break;
+        }
+        start = broadcast + 1;
+    }
+    results
+}
+
+fn range_to_cidrs_v6(from: u128, to: u128) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut start = from;
+    while start <= to {
+        let mut prefix_len = 128u32;
+        while prefix_len > 0 {
+            let shift = 128 - prefix_len + 1;
+            if shift >= 128 {
+                let network = 0u128;
+                let broadcast = u128::MAX;
+                if network == start && broadcast <= to {
+                    prefix_len -= 1;
+                } else {
+                    break;
+                }
+            } else {
+                let mask = !(((1u128) << shift) - 1);
+                let network = start & mask;
+                let broadcast = network | !mask;
+                if network == start && broadcast <= to {
+                    prefix_len -= 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        prefix_len += if prefix_len < 128 { 1 } else { 0 };
+        if prefix_len > 128 {
+            prefix_len = 128;
+        }
+        let mask = if prefix_len == 0 {
+            0u128
+        } else if prefix_len >= 128 {
+            u128::MAX
+        } else {
+            !((1u128 << (128 - prefix_len)) - 1)
+        };
+        let broadcast = start | !mask;
+        let ip = Ipv6Addr::from(start);
+        results.push(format!("{}/{}", ip, prefix_len));
+        if broadcast == u128::MAX {
+            break;
+        }
+        start = broadcast + 1;
+    }
+    results
+}
+
+impl IpSet {
+    fn to_cidrs(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for &(f, t) in &self.ranges_v4 {
+            out.extend(range_to_cidrs_v4(f, t));
+        }
+        for &(f, t) in &self.ranges_v6 {
+            out.extend(range_to_cidrs_v6(f, t));
+        }
+        out
+    }
+}
+
+fn read_u16_list<R: Read>(r: &mut R) -> io::Result<Vec<u16>> {
+    let count = read_uvarint(r)? as usize;
+    let mut v = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut buf = [0u8; 2];
+        r.read_exact(&mut buf)?;
+        v.push(u16::from_be_bytes(buf));
+    }
+    Ok(v)
+}
+
+fn list_default_rule<R: Read>(r: &mut R) -> io::Result<Vec<RuleEntry>> {
+    let mut entries = Vec::new();
+    loop {
+        let item_type = read_u8(r)?;
+        match item_type {
+            ITEM_FINAL => {
+                let _invert = read_u8(r)?;
+                return Ok(entries);
+            }
+            ITEM_DOMAIN => {
+                let set = SuccinctSet::read(r)?;
+                for (t, v) in set.enumerate() {
+                    entries.push(RuleEntry { rule_type: t, value: v });
+                }
+            }
+            ITEM_DOMAIN_KEYWORD => {
+                for kw in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "domain_keyword".into(), value: kw });
+                }
+            }
+            ITEM_DOMAIN_REGEX => {
+                for rx in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "domain_regex".into(), value: rx });
+                }
+            }
+            ITEM_IP_CIDR => {
+                let set = read_ip_set(r)?;
+                for cidr in set.to_cidrs() {
+                    entries.push(RuleEntry { rule_type: "ip_cidr".into(), value: cidr });
+                }
+            }
+            ITEM_SOURCE_IP_CIDR => {
+                let set = read_ip_set(r)?;
+                for cidr in set.to_cidrs() {
+                    entries.push(RuleEntry { rule_type: "source_ip_cidr".into(), value: cidr });
+                }
+            }
+            ITEM_QUERY_TYPE => {
+                for qt in read_u16_list(r)? {
+                    entries.push(RuleEntry { rule_type: "query_type".into(), value: qt.to_string() });
+                }
+            }
+            ITEM_NETWORK => {
+                for n in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "network".into(), value: n });
+                }
+            }
+            ITEM_SOURCE_PORT => {
+                for p in read_u16_list(r)? {
+                    entries.push(RuleEntry { rule_type: "source_port".into(), value: p.to_string() });
+                }
+            }
+            ITEM_PORT => {
+                for p in read_u16_list(r)? {
+                    entries.push(RuleEntry { rule_type: "port".into(), value: p.to_string() });
+                }
+            }
+            ITEM_SOURCE_PORT_RANGE => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "source_port_range".into(), value: s });
+                }
+            }
+            ITEM_PORT_RANGE => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "port_range".into(), value: s });
+                }
+            }
+            ITEM_PROCESS_NAME => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "process_name".into(), value: s });
+                }
+            }
+            ITEM_PROCESS_PATH => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "process_path".into(), value: s });
+                }
+            }
+            ITEM_PACKAGE_NAME => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "package_name".into(), value: s });
+                }
+            }
+            ITEM_WIFI_SSID => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "wifi_ssid".into(), value: s });
+                }
+            }
+            ITEM_WIFI_BSSID => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "wifi_bssid".into(), value: s });
+                }
+            }
+            ITEM_PROCESS_PATH_REGEX => {
+                for s in read_string_list(r)? {
+                    entries.push(RuleEntry { rule_type: "process_path_regex".into(), value: s });
+                }
+            }
+            ITEM_ADGUARD_DOMAIN => {
+                let matcher = AdGuardMatcher::read(r)?;
+                for (t, v) in matcher.enumerate() {
+                    entries.push(RuleEntry { rule_type: t, value: v });
+                }
+            }
+            ITEM_NETWORK_TYPE => {
+                let count = read_uvarint(r)? as usize;
+                for _ in 0..count {
+                    let b = read_u8(r)?;
+                    entries.push(RuleEntry { rule_type: "network_type".into(), value: b.to_string() });
+                }
+            }
+            ITEM_NETWORK_IS_EXPENSIVE => {
+                entries.push(RuleEntry { rule_type: "network_is_expensive".into(), value: "true".into() });
+            }
+            ITEM_NETWORK_IS_CONSTRAINED => {
+                entries.push(RuleEntry { rule_type: "network_is_constrained".into(), value: "true".into() });
+            }
+            ITEM_NETWORK_INTERFACE_ADDRESS => {
+                let size = read_uvarint(r)? as usize;
+                for _ in 0..size {
+                    read_u8(r)?;
+                    let count = read_uvarint(r)? as usize;
+                    for _ in 0..count {
+                        let addr_len = read_uvarint(r)? as usize;
+                        skip_exact(r, addr_len)?;
+                        skip_exact(r, 1)?;
+                    }
+                }
+            }
+            ITEM_DEFAULT_INTERFACE_ADDRESS => {
+                let count = read_uvarint(r)? as usize;
+                for _ in 0..count {
+                    let addr_len = read_uvarint(r)? as usize;
+                    skip_exact(r, addr_len)?;
+                    skip_exact(r, 1)?;
+                }
+            }
+            other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown item type: {:#x}", other),
+                ));
+            }
+        }
+    }
+}
+
+fn list_rule<R: Read>(r: &mut R) -> io::Result<Vec<RuleEntry>> {
+    match read_u8(r)? {
+        0 => list_default_rule(r),
+        1 => list_logical_rule(r),
+        t => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown rule type: {}", t),
+        )),
+    }
+}
+
+fn list_logical_rule<R: Read>(r: &mut R) -> io::Result<Vec<RuleEntry>> {
+    let _mode = read_u8(r)?;
+    let count = read_uvarint(r)? as usize;
+    let mut entries = Vec::new();
+    for _ in 0..count {
+        entries.extend(list_rule(r)?);
+    }
+    let _invert = read_u8(r)?;
+    Ok(entries)
+}
+
+fn srs_list_bytes(data: &[u8]) -> Result<Vec<RuleEntry>, String> {
+    if data.len() < 4 || &data[0..3] != b"SRS" {
+        return Err("invalid SRS magic".into());
+    }
+    let mut decompressed = Vec::new();
+    ZlibDecoder::new(&data[4..])
+        .read_to_end(&mut decompressed)
+        .map_err(|e| format!("decompress: {}", e))?;
+    let mut cur = Cursor::new(&decompressed);
+    let rule_count =
+        read_uvarint(&mut cur).map_err(|e| format!("read rule count: {}", e))? as usize;
+    let mut entries = Vec::new();
+    for i in 0..rule_count {
+        match list_rule(&mut cur) {
+            Ok(e) => entries.extend(e),
+            Err(e) => return Err(format!("rule[{}]: {}", i, e)),
+        }
+    }
+    Ok(entries)
+}
+
+fn resolve_srs_data(
+    working_dir: &str,
+    config_path: &str,
+    singbox_path: &str,
+    tag: &str,
+) -> Result<Vec<u8>, String> {
+    let mut last_cache_error: Option<String> = None;
+
+    if let Some(cache_path) = find_cache_db(&[working_dir, config_path, singbox_path]) {
+        let data = std::fs::read(&cache_path)
+            .map_err(|e| format!("read '{}': {}", cache_path.to_string_lossy(), e))?;
+        let ps = bolt_page_size(&data);
+        let root_pgid = bolt_meta_root(&data, ps);
+
+        match (|| -> Result<Vec<u8>, String> {
+            let (is_bucket, bval) = bolt_btree_lookup(&data, ps, root_pgid, b"rule_set")
+                .map_err(|e| format!("lookup rule_set bucket: {}", e))?
+                .ok_or_else(|| "rule_set bucket not found".to_string())?;
+            if !is_bucket || bval.len() < 8 {
+                return Err("rule_set is not a valid bucket".into());
+            }
+            let bucket_root = u64::from_le_bytes(bval[0..8].try_into().unwrap());
+            let saved = if bucket_root == 0 {
+                if bval.len() < 16 + PAGE_HEADER_SIZE {
+                    return Err(format!("tag '{}' not found", tag));
+                }
+                let inline_page = &bval[16..];
+                let inline_count = u16::from_le_bytes([inline_page[10], inline_page[11]]) as usize;
+                bolt_leaf_lookup(inline_page, inline_count, tag.as_bytes())
+                    .map(|(_, v)| v)
+                    .ok_or_else(|| format!("tag '{}' not found", tag))?
+            } else {
+                bolt_btree_lookup(&data, ps, bucket_root, tag.as_bytes())
+                    .map_err(|e| format!("lookup '{}': {}", tag, e))?
+                    .map(|(_, v)| v)
+                    .ok_or_else(|| format!("tag '{}' not found", tag))?
+            };
+            parse_saved_binary_content(&saved)
+                .map_err(|e| format!("parse SavedBinary '{}': {}", tag, e))
+        })() {
+            Ok(srs_bytes) => return Ok(srs_bytes),
+            Err(e) => last_cache_error = Some(e),
+        }
+    }
+
+    if let Some(srs_path) = find_local_srs_from_config(working_dir, config_path, tag) {
+        return std::fs::read(&srs_path)
+            .map_err(|e| format!("read '{}': {}", srs_path.to_string_lossy(), e));
+    }
+
+    if let Some(srs_path) = find_local_srs_by_tag(&[working_dir, config_path, singbox_path], tag) {
+        return std::fs::read(&srs_path)
+            .map_err(|e| format!("read '{}': {}", srs_path.to_string_lossy(), e));
+    }
+
+    if let Some(e) = last_cache_error {
+        Err(format!("{}; and local '{}.srs' not found", e, tag))
+    } else {
+        Err(format!("no cache.db found; and local '{}.srs' not found", tag))
+    }
+}
+
+#[tauri::command]
+pub async fn srs_list_provider(
+    working_dir: String,
+    config_path: String,
+    singbox_path: String,
+    tag: String,
+) -> Result<Vec<RuleEntry>, String> {
+    tokio::task::spawn_blocking(move || {
+        let data = resolve_srs_data(&working_dir, &config_path, &singbox_path, &tag)?;
+        srs_list_bytes(&data)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Match provider by tag:
