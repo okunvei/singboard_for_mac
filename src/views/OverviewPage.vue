@@ -60,9 +60,8 @@ onMounted(async () => {
         <div class="text-xs text-base-content/50">总计 {{ formatBytes(downloadTotal) }}</div>
       </div>
       <div class="bg-base-200 rounded-xl p-4 flex flex-col gap-1.5">
-        <div class="flex items-center gap-2 text-xs text-base-content/60 font-semibold tracking-wider">
+        <div class="text-xs text-base-content/60 font-semibold tracking-wider">
           连接
-          <span class="w-1.5 h-1.5 rounded-full bg-success inline-block" />
         </div>
         <div class="text-3xl font-extralight tabular-nums">{{ connections.length }}</div>
         <div class="h-14 mt-1">

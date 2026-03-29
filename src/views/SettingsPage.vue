@@ -36,6 +36,9 @@ const { proxyGroups, loadProxies } = useProxiesStore()
 
 const groupTestUrlsExpanded = ref(false)
 const newGroupTestUrl = ref({ group: '', url: '' })
+const editingGroupTestUrl = ref<string | null>(null)
+const editGroupTestUrlGroup = ref('')
+const editGroupTestUrlValue = ref('')
 
 const groupTestUrlEntries = computed(() =>
   Object.entries(config.value.groupTestUrls)
@@ -47,6 +50,12 @@ const availableGroups = computed(() =>
     .map((g) => g.name)
 )
 
+const editAvailableGroups = computed(() =>
+  proxyGroups.value
+    .filter((g) => g.name !== 'GLOBAL' && (g.name === editingGroupTestUrl.value || !config.value.groupTestUrls[g.name]))
+    .map((g) => g.name)
+)
+
 function addGroupTestUrl() {
   const group = newGroupTestUrl.value.group.trim()
   const url = newGroupTestUrl.value.url.trim()
@@ -55,23 +64,49 @@ function addGroupTestUrl() {
   newGroupTestUrl.value = { group: '', url: '' }
 }
 
+function startEditGroupTestUrl(group: string) {
+  editingGroupTestUrl.value = group
+  editGroupTestUrlGroup.value = group
+  editGroupTestUrlValue.value = config.value.groupTestUrls[group] ?? ''
+}
+
+function saveEditGroupTestUrl() {
+  const oldGroup = editingGroupTestUrl.value
+  if (!oldGroup) return
+  const newGroup = editGroupTestUrlGroup.value.trim()
+  const url = editGroupTestUrlValue.value.trim()
+  if (!newGroup || !url) return
+  const { [oldGroup]: _, ...rest } = config.value.groupTestUrls
+  config.value.groupTestUrls = { ...rest, [newGroup]: url }
+  editingGroupTestUrl.value = null
+}
+
 function removeGroupTestUrl(group: string) {
   const { [group]: _, ...rest } = config.value.groupTestUrls
   config.value.groupTestUrls = rest
+  if (editingGroupTestUrl.value === group) editingGroupTestUrl.value = null
 }
 
 const clashMode = ref('Rule')
 const clashModeOptions = ref<string[]>(['Rule'])
 const singboxVersion = ref('')
 const actionLoading = ref('')
+function parseApiUrl(url: string) {
+  const match = url.match(/^(https?):\/\/(.+)$/)
+  if (match) return { protocol: match[1] as 'http' | 'https', host: match[2] }
+  return { protocol: 'http' as const, host: url }
+}
+
 const activeApiForm = ref({
   name: '',
-  url: '',
+  protocol: 'http' as 'http' | 'https',
+  host: '',
   secret: '',
 })
 const newApiForm = ref({
   name: '',
-  url: '',
+  protocol: 'http' as 'http' | 'https',
+  host: '',
   secret: '',
 })
 const showEditApiForm = ref(false)
@@ -79,9 +114,11 @@ const showAddApiForm = ref(false)
 
 function syncActiveApiForm() {
   const current = activeClashApi.value
+  const { protocol, host } = parseApiUrl(current?.url ?? '')
   activeApiForm.value = {
     name: current?.name ?? '',
-    url: current?.url ?? '',
+    protocol,
+    host,
     secret: current?.secret ?? '',
   }
 }
@@ -97,7 +134,7 @@ function toggleEditApiForm() {
 function toggleAddApiForm() {
   showAddApiForm.value = !showAddApiForm.value
   if (showAddApiForm.value) {
-    newApiForm.value = { name: '', url: '', secret: '' }
+    newApiForm.value = { name: '', protocol: 'http', host: '', secret: '' }
     showEditApiForm.value = false
   }
 }
@@ -110,12 +147,13 @@ function handleSwitchApi(id: string) {
 }
 
 function handleSaveActiveApi() {
-  const url = activeApiForm.value.url.trim()
-  if (!url) {
-    pushToast({ message: '请填写当前 API 地址。', type: 'error' })
+  const host = activeApiForm.value.host.trim()
+  if (!host) {
+    pushToast({ message: '请填写当前后端主机地址。', type: 'error' })
     return
   }
-  const name = activeApiForm.value.name.trim() || 'API'
+  const name = activeApiForm.value.name.trim() || '后端'
+  const url = `${activeApiForm.value.protocol}://${host}`
   updateActiveClashApi({
     name,
     url,
@@ -127,16 +165,17 @@ function handleSaveActiveApi() {
 }
 
 function handleAddApi() {
-  const url = newApiForm.value.url.trim()
-  if (!url) {
-    pushToast({ message: '请填写新增 API 地址。', type: 'error' })
+  const host = newApiForm.value.host.trim()
+  if (!host) {
+    pushToast({ message: '请填写新增后端主机地址。', type: 'error' })
     return
   }
-  const name = newApiForm.value.name.trim() || `API ${clashApis.value.length + 1}`
+  const name = newApiForm.value.name.trim() || `后端 ${clashApis.value.length + 1}`
+  const url = `${newApiForm.value.protocol}://${host}`
   const id = addClashApi(name, url, newApiForm.value.secret)
   setActiveClashApi(id)
   syncActiveApiForm()
-  newApiForm.value = { name: '', url: '', secret: '' }
+  newApiForm.value = { name: '', protocol: 'http', host: '', secret: '' }
   showAddApiForm.value = false
   refresh()
   loadClashConfig()
@@ -146,12 +185,12 @@ async function handleRemoveActiveApi() {
   const current = activeClashApi.value
   if (!current) return
   if (clashApis.value.length <= 1) {
-    pushToast({ message: '至少保留一个 Clash API。', type: 'error' })
+    pushToast({ message: '至少保留一个后端。', type: 'error' })
     return
   }
   const confirmed = await confirmDialogRef.value?.show({
-    title: '删除 API',
-    message: `确定删除 API：${current.name} ?`,
+    title: '删除后端',
+    message: `确定删除后端：${current.name} ?`,
     confirmText: '删除',
     variant: 'danger',
   })
@@ -241,12 +280,12 @@ async function checkServiceAfterStart() {
     pushToast({ message: msg, type: 'error' }, 10000)
     return
   }
-  // 服务显示 running，再验证 Clash API 是否可达
+  // 服务显示 running，再验证后端是否可达
   try {
     await fetchConfig()
   } catch {
     pushToast({
-      message: '服务进程已启动但无法连接 Clash API，核心可能未正常运行，请检查配置文件',
+      message: '服务进程已启动但无法连接后端，核心可能未正常运行，请检查配置文件',
       type: 'error',
     }, 8000)
   }
@@ -431,9 +470,9 @@ watch(
     </div>
 
     <div class="bg-base-200 rounded-lg p-4 space-y-3">
-      <h2 class="font-semibold text-sm">Clash API</h2>
+      <h2 class="font-semibold text-sm">后端</h2>
       <div class="space-y-2">
-        <label class="label py-0"><span class="label-text text-xs">当前 API</span></label>
+        <label class="label py-0"><span class="label-text text-xs">当前后端</span></label>
         <div class="flex items-center gap-2">
           <select
             class="select select-sm select-bordered flex-1"
@@ -441,13 +480,13 @@ watch(
             @change="handleSwitchApi(($event.target as HTMLSelectElement).value)"
           >
             <option v-for="api in clashApis" :key="api.id" :value="api.id">
-              {{ api.url }}
+              {{ api.name }} ({{ api.url }})
             </option>
           </select>
           <button
             class="btn btn-sm btn-square btn-outline"
             :class="{ 'btn-primary': showEditApiForm }"
-            title="编辑当前 API"
+            title="编辑当前后端"
             @click="toggleEditApiForm"
           >
             ✎
@@ -455,7 +494,7 @@ watch(
           <button
             class="btn btn-sm btn-square btn-outline"
             :class="{ 'btn-primary': showAddApiForm }"
-            title="新增 API"
+            title="新增后端"
             @click="toggleAddApiForm"
           >
             +
@@ -464,19 +503,25 @@ watch(
       </div>
 
       <div v-if="showEditApiForm" class="rounded-md bg-base-100 p-3 space-y-2 border border-base-300">
-        <div class="text-xs font-medium text-base-content/70">编辑当前 API</div>
+        <div class="text-xs font-medium text-base-content/70">编辑当前后端</div>
         <div class="form-control">
           <label class="label"><span class="label-text text-xs">名称</span></label>
-          <input v-model="activeApiForm.name" type="text" class="input input-sm input-bordered" placeholder="默认 API" />
+          <input v-model="activeApiForm.name" type="text" class="input input-sm input-bordered" placeholder="默认后端" />
         </div>
         <div class="form-control">
-          <label class="label"><span class="label-text text-xs">API 地址</span></label>
-          <input
-            v-model="activeApiForm.url"
-            type="text"
-            class="input input-sm input-bordered"
-            placeholder="http://127.0.0.1:9090"
-          />
+          <label class="label"><span class="label-text text-xs">主机</span></label>
+          <div class="flex gap-1">
+            <select v-model="activeApiForm.protocol" class="select select-sm select-bordered w-24 shrink-0">
+              <option value="http">http</option>
+              <option value="https">https</option>
+            </select>
+            <input
+              v-model="activeApiForm.host"
+              type="text"
+              class="input input-sm input-bordered flex-1"
+              placeholder="127.0.0.1:9090"
+            />
+          </div>
         </div>
         <div class="form-control">
           <label class="label"><span class="label-text text-xs">密钥 (Secret)</span></label>
@@ -500,19 +545,25 @@ watch(
       </div>
 
       <div v-if="showAddApiForm" class="rounded-md bg-base-100 p-3 space-y-2 border border-base-300">
-        <div class="text-xs font-medium text-base-content/70">新增 API</div>
+        <div class="text-xs font-medium text-base-content/70">新增后端</div>
         <div class="form-control">
           <label class="label"><span class="label-text text-xs">名称</span></label>
-          <input v-model="newApiForm.name" type="text" class="input input-sm input-bordered" placeholder="API 2" />
+          <input v-model="newApiForm.name" type="text" class="input input-sm input-bordered" placeholder="后端 2" />
         </div>
         <div class="form-control">
-          <label class="label"><span class="label-text text-xs">API 地址</span></label>
-          <input
-            v-model="newApiForm.url"
-            type="text"
-            class="input input-sm input-bordered"
-            placeholder="http://127.0.0.1:9090"
-          />
+          <label class="label"><span class="label-text text-xs">主机</span></label>
+          <div class="flex gap-1">
+            <select v-model="newApiForm.protocol" class="select select-sm select-bordered w-24 shrink-0">
+              <option value="http">http</option>
+              <option value="https">https</option>
+            </select>
+            <input
+              v-model="newApiForm.host"
+              type="text"
+              class="input input-sm input-bordered flex-1"
+              placeholder="127.0.0.1:9090"
+            />
+          </div>
         </div>
         <div class="form-control">
           <label class="label"><span class="label-text text-xs">密钥 (Secret)</span></label>
@@ -560,14 +611,44 @@ watch(
             :key="group"
             class="flex items-center gap-1.5"
           >
-            <span class="badge badge-sm badge-outline gap-1 shrink-0">
-              {{ group }}
-              <button class="text-base-content/40 hover:text-error" @click="removeGroupTestUrl(group)">×</button>
-            </span>
-            <svg class="w-3 h-3 shrink-0 text-base-content/30" viewBox="0 0 12 12">
-              <path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span class="text-xs truncate flex-1" :title="url">{{ url }}</span>
+            <template v-if="editingGroupTestUrl === group">
+              <select
+                v-model="editGroupTestUrlGroup"
+                class="select select-xs select-bordered w-28 shrink-0"
+              >
+                <option v-for="name in editAvailableGroups" :key="name" :value="name">{{ name }}</option>
+              </select>
+              <svg class="w-3 h-3 shrink-0 text-base-content/30" viewBox="0 0 12 12">
+                <path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <input
+                v-model="editGroupTestUrlValue"
+                type="text"
+                class="input input-xs input-bordered flex-1"
+                @keyup.enter="saveEditGroupTestUrl"
+                @keyup.escape="editingGroupTestUrl = null"
+              />
+              <button class="btn btn-ghost btn-xs btn-square min-h-0 h-5 w-5" @click="saveEditGroupTestUrl" title="保存">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              </button>
+            </template>
+            <template v-else>
+              <span class="badge badge-sm badge-outline gap-1 shrink-0">
+                {{ group }}
+                <button class="text-base-content/40 hover:text-error" @click="removeGroupTestUrl(group)">×</button>
+              </span>
+              <svg class="w-3 h-3 shrink-0 text-base-content/30" viewBox="0 0 12 12">
+                <path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="text-xs truncate flex-1" :title="url">{{ url }}</span>
+              <button class="btn btn-ghost btn-xs btn-square min-h-0 h-5 w-5" @click="startEditGroupTestUrl(group)" title="编辑">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                </svg>
+              </button>
+            </template>
             <button class="btn btn-ghost btn-xs btn-square min-h-0 h-5 w-5 text-error/60 hover:text-error" @click="removeGroupTestUrl(group)" title="删除">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -672,15 +753,15 @@ watch(
     <div class="bg-base-200 rounded-lg p-4 space-y-3">
       <h2 class="font-semibold text-sm">窗口行为</h2>
       <div class="form-control">
-        <label class="label cursor-pointer justify-start gap-2">
+        <div class="label justify-start gap-2">
           <input
             type="checkbox"
             class="toggle toggle-sm toggle-primary"
             v-model="config.closeToTray"
           />
           <span class="label-text text-xs">关闭时隐藏到系统托盘</span>
-          <span class="text-xs text-base-content/40">启用后点击关闭按钮将隐藏窗口而非退出</span>
-        </label>
+
+        </div>
       </div>
     </div>
   </div>
