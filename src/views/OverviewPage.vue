@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { onMounted, computed, ref } from 'vue'
+import { onMounted, computed } from 'vue'
 import { useOverviewStore } from '@/stores/overview'
 import { useConnectionsStore } from '@/stores/connections'
 import NetworkInfo from '@/components/overview/NetworkInfo.vue'
 import TopologyChart from '@/components/overview/TopologyChart.vue'
+import SparkLine from '@/components/overview/SparkLine.vue'
 import { formatBytes, formatSpeed } from '@/utils/format'
 
-const { currentTraffic, memory, start: startOverview } = useOverviewStore()
-const { connections, start: startConnections } = useConnectionsStore()
+const {
+  currentTraffic, memory, uploadSpeedHistory, downloadSpeedHistory, connectionsHistory,
+  start: startOverview,
+} = useOverviewStore()
+const { connections, downloadTotal, uploadTotal, start: startConnections } = useConnectionsStore()
 
 const memoryUsage = computed(() => formatBytes(memory.value.inuse))
+
+const speedLabelFormatter = (v: number) => (v === 0 ? '' : formatSpeed(v))
+const connLabelFormatter = (v: number) => (v === 0 ? '' : String(Math.round(v)))
 
 onMounted(async () => {
   startOverview()
@@ -21,22 +28,52 @@ onMounted(async () => {
   <div class="space-y-4">
     <h1 class="text-xl font-bold">概览</h1>
 
-    <div class="grid grid-cols-4 gap-3">
-      <div class="stat bg-base-200 rounded-lg p-3">
-        <div class="stat-title text-xs">上传速度</div>
-        <div class="stat-value text-lg text-primary">{{ formatSpeed(currentTraffic.up) }}</div>
+    <div class="grid grid-cols-3 gap-3">
+      <div class="bg-base-200 rounded-xl p-4 flex flex-col gap-1.5">
+        <div class="text-xs text-base-content/60 font-semibold tracking-wider">上传</div>
+        <div class="text-3xl font-extralight tabular-nums">
+          {{ formatSpeed(currentTraffic.up) }}
+        </div>
+        <div class="h-14 mt-1">
+          <SparkLine
+            :data="uploadSpeedHistory"
+            color="#67d4e2"
+            :min="60000"
+            :label-formatter="speedLabelFormatter"
+          />
+        </div>
+        <div class="text-xs text-base-content/50">总计 {{ formatBytes(uploadTotal) }}</div>
       </div>
-      <div class="stat bg-base-200 rounded-lg p-3">
-        <div class="stat-title text-xs">下载速度</div>
-        <div class="stat-value text-lg text-secondary">{{ formatSpeed(currentTraffic.down) }}</div>
+      <div class="bg-base-200 rounded-xl p-4 flex flex-col gap-1.5">
+        <div class="text-xs text-base-content/60 font-semibold tracking-wider">下载</div>
+        <div class="text-3xl font-extralight tabular-nums">
+          {{ formatSpeed(currentTraffic.down) }}
+        </div>
+        <div class="h-14 mt-1">
+          <SparkLine
+            :data="downloadSpeedHistory"
+            color="#8b7bf6"
+            :min="60000"
+            :label-formatter="speedLabelFormatter"
+          />
+        </div>
+        <div class="text-xs text-base-content/50">总计 {{ formatBytes(downloadTotal) }}</div>
       </div>
-      <div class="stat bg-base-200 rounded-lg p-3">
-        <div class="stat-title text-xs">活跃连接</div>
-        <div class="stat-value text-lg">{{ connections.length }}</div>
-      </div>
-      <div class="stat bg-base-200 rounded-lg p-3">
-        <div class="stat-title text-xs">内存使用</div>
-        <div class="stat-value text-lg">{{ memoryUsage }}</div>
+      <div class="bg-base-200 rounded-xl p-4 flex flex-col gap-1.5">
+        <div class="flex items-center gap-2 text-xs text-base-content/60 font-semibold tracking-wider">
+          连接
+          <span class="w-1.5 h-1.5 rounded-full bg-success inline-block" />
+        </div>
+        <div class="text-3xl font-extralight tabular-nums">{{ connections.length }}</div>
+        <div class="h-14 mt-1">
+          <SparkLine
+            :data="connectionsHistory"
+            color="#10b981"
+            :min="10"
+            :label-formatter="connLabelFormatter"
+          />
+        </div>
+        <div class="text-xs text-base-content/50">内存使用 {{ memoryUsage }}</div>
       </div>
     </div>
 

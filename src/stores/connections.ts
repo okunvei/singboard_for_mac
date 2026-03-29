@@ -2,6 +2,7 @@ import { ref, computed, onUnmounted, watch } from 'vue'
 import { createClashWS } from '@/api/websocket'
 import { disconnectAll, disconnectById } from '@/api'
 import { useConfigStore } from './config'
+import { pushConnectionCount } from './overview'
 import type { Connection, ConnectionsSnapshot } from '@/types'
 import type ReconnectingWebSocket from 'reconnecting-websocket'
 
@@ -73,6 +74,7 @@ export function useConnectionsStore() {
       prevTraffic = newTraffic
 
       connections.value = data.connections
+      pushConnectionCount(data.connections.length)
     })
   }
 

@@ -1,6 +1,14 @@
 import ReconnectingWebSocket from 'reconnecting-websocket'
 import { useConfigStore } from '@/stores/config'
 
+function debounce<T extends (...args: any[]) => void>(fn: T, delay: number): T {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return ((...args: any[]) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), delay)
+  }) as unknown as T
+}
+
 export function createClashWS(
   path: string,
   onMessage: (data: any) => void,
@@ -27,12 +35,14 @@ export function createClashWS(
     maxRetries: Infinity,
   })
 
-  ws.onmessage = (event) => {
+  const handler = (event: MessageEvent) => {
     try {
       const data = JSON.parse(event.data)
       onMessage(data)
     } catch {}
   }
+
+  ws.onmessage = debounce(handler, 100)
 
   return ws
 }
