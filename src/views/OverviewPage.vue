@@ -70,6 +70,7 @@ onMounted(async () => {
             color="#10b981"
             :min="10"
             :label-formatter="connLabelFormatter"
+            :right-margin="24"
           />
         </div>
         <div class="text-xs text-base-content/50">内存使用 {{ memoryUsage }}</div>

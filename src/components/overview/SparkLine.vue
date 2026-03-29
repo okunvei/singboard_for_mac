@@ -14,6 +14,7 @@ const props = withDefaults(
     color: string
     min?: number
     labelFormatter?: (v: number) => string
+    rightMargin?: number
   }>(),
   {
     min: 1,
@@ -28,7 +29,7 @@ const options = computed(() => ({
   grid: {
     left: 0,
     top: 8,
-    right: props.labelFormatter ? 80 : 0,
+    right: props.labelFormatter ? (props.rightMargin ?? 50) : 0,
     bottom: 0,
   },
   xAxis: {
