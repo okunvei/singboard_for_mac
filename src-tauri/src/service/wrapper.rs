@@ -95,7 +95,13 @@ fn run_service_inner(_arguments: Vec<OsString>) -> Result<(), String> {
         })
         .map_err(|e| format!("Failed to set status: {:?}", e))?;
 
-    let (singbox_path, config_path, working_dir) = read_service_params(svc_name)?;
+    let (singbox_path, config_path, working_dir) = match read_service_params(svc_name) {
+        Ok(v) => v,
+        Err(e) => {
+            status_handle.set_service_status(make_stopped_status()).ok();
+            return Err(e);
+        }
+    };
     let log_path = resolve_service_error_log_path(svc_name);
 
     // 启动前清除旧的错误日志
@@ -105,7 +111,14 @@ fn run_service_inner(_arguments: Vec<OsString>) -> Result<(), String> {
     let mut startup_succeeded = false;
 
     for attempt in 1..=STARTUP_MAX_ATTEMPTS {
-        let mut current_child = spawn_singbox(&singbox_path, &config_path, &working_dir)?;
+        let mut current_child = match spawn_singbox(&singbox_path, &config_path, &working_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                save_error_log(&log_path, &e);
+                status_handle.set_service_status(make_stopped_status()).ok();
+                return Err(e);
+            }
+        };
 
         // 等待 2 秒验证进程是否存活
         std::thread::sleep(Duration::from_secs(STARTUP_VERIFY_SECONDS));
