@@ -41,10 +41,10 @@ export function useServiceStore() {
   const statusText = computed(() => {
     const map: Record<string, string> = {
       running: '运行中',
-      stopped: '已停止',
+      stopped: '服务已安装 核心未运行',
       starting: '启动中',
       stopping: '停止中',
-      not_installed: '未安装',
+      not_installed: '请先在设置中安装服务',
       unknown: '未知',
     }
     return map[serviceStatus.value.state] || '未知'

@@ -5,7 +5,7 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      redirect: '/proxies',
+      redirect: '/overview',
     },
     {
       path: '/overview',

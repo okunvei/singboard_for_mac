@@ -24,6 +24,7 @@ const {
   getLatency,
   getTestUrl,
   isIPv6,
+  clearLatency, // <--- 这里增加一个 clearLatency
 } = useProxiesStore()
 
 import { useConfigStore } from '@/stores/config'
@@ -184,19 +185,24 @@ function formatUsage(info: ProxyProvider['subscriptionInfo']): string {
   return `${formatBytes(used)} / ${formatBytes(info.Total)} ( ${pct}% )`
 }
 
-onMounted(() => {
+// 封装一个初始化函数
+const initProxies = async () => {
   if (isRunning.value) {
-    loadProxies()
-    loadProviders()
-    startConnections()
+    clearLatency()      // 第一步：先清空旧的延迟数值
+    await loadProxies() // 第二步：重新加载节点列表（此时延迟会显示为 N/A）
+    loadProviders()     // 第三步：加载提供商
+    startConnections()  // 第四步：开启连接监控
   }
+}
+
+onMounted(() => {
+  initProxies()
 })
 
 watch(isRunning, (running) => {
   if (running) {
-    loadProxies()
-    loadProviders()
-    startConnections()
+    // 当检测到 sing-box 服务从停止变为“运行中”时，触发重置并加载
+    initProxies()
   }
 })
 

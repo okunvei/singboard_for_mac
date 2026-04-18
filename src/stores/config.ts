@@ -1,6 +1,11 @@
 import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { AppConfig, ClashApiProfile, ConfigProfile } from '@/types'
+import { fetchUrl, writeSingboxConfig, getRemoteConfigPath, validateSingboxConfig, validateSingboxConfigContent, copyToRunningConfig } from '@/bridge/config'
+import { useToastStore } from '@/stores/toast'
+
+const autoUpdateTimers = new Map<string, ReturnType<typeof setInterval>>()
+const autoUpdateInitialDelays = new Map<string, ReturnType<typeof setTimeout>>()
 
 const STORAGE_KEY = 'singboard-config'
 
@@ -106,6 +111,8 @@ function normalizeConfig(raw: any): AppConfig {
     configProfiles,
     activeConfigProfileId,
     closeToTray: typeof raw?.closeToTray === 'boolean' ? raw.closeToTray : false,
+    // --- 只需要在这里加入下面这一行 ---
+    selfProxy: typeof raw?.selfProxy === 'string' ? raw.selfProxy : '',
   }
 }
 
@@ -137,6 +144,101 @@ invoke('set_close_to_tray', { enabled: config.value.closeToTray }).catch(() => {
 watch(() => config.value.closeToTray, (val) => {
   invoke('set_close_to_tray', { enabled: val }).catch(() => {})
 })
+
+// 同步自身代理状态到 Rust 后端
+invoke('set_self_proxy', { proxy: config.value.selfProxy }).catch(() => {})
+watch(() => config.value.selfProxy, (val) => {
+  invoke('set_self_proxy', { proxy: val }).catch(() => {})
+})
+
+// 核心逻辑移到外部：变成“后台服务”，增加临时校验环节
+async function performUpdate(id: string) {
+  const profile = config.value.configProfiles.find(p => p.id === id)
+  if (!profile || profile.type !== 'remote') return
+
+  // 在函数内部获取 toast，避免初始化顺序错误
+  const { pushToast } = useToastStore()
+
+  try {
+    console.log(`[AutoUpdate] 正在执行: ${profile.name}`)
+    const content = await fetchUrl(profile.source)
+    const destPath = await getRemoteConfigPath(profile.id)
+
+    // ✅ 先用 sing-box check 校验拉取到的内容，通过后才写入文件
+    const sp = config.value.singboxPath
+    const wd = config.value.workingDir
+    if (sp) {
+      await validateSingboxConfigContent(sp, destPath, content, wd)
+    }
+
+    // ✅ 校验通过，才允许覆盖写入
+    await writeSingboxConfig(destPath, content)
+    
+    // 直接操作全局的 config ref
+    profile.lastUpdated = new Date().toISOString()
+
+    if (id === config.value.activeConfigProfileId) {
+      if (sp) {
+        await copyToRunningConfig(destPath)
+      }
+    }
+    pushToast({ message: `更新成功: ${profile.name}`, type: 'info' })
+  } catch (e: any) {
+    console.error(`[AutoUpdate] 失败:`, e)
+    pushToast({ message: `更新失败: ${profile.name}`, type: 'error' })
+  }
+}
+
+function setupAutoUpdate() {
+  // 1. 清理现有所有定时器
+  autoUpdateTimers.forEach(t => clearInterval(t))
+  autoUpdateTimers.clear()
+  autoUpdateInitialDelays.forEach(t => clearTimeout(t))
+  autoUpdateInitialDelays.clear()
+
+  const now = Date.now()
+
+  config.value.configProfiles.forEach(profile => {
+    if (profile.type === 'remote' && profile.autoUpdateInterval > 0) {
+      const intervalMs = profile.autoUpdateInterval * 3600_000
+      const lastUpdatedMs = profile.lastUpdated ? new Date(profile.lastUpdated).getTime() : 0
+      
+      // 计算距离下次更新还剩多少时间
+      const elapsed = now - lastUpdatedMs
+      let remaining = intervalMs - elapsed
+
+      // 如果已经超时，或者从未更新过，设置 10 秒后执行（给软件启动留一点缓冲时间）
+      if (remaining <= 0) {
+        console.log(`[AutoUpdate] ${profile.name} 已过期，将在 10 秒后触发补偿更新`)
+        remaining = 10_000 
+      }
+
+      // 启动逻辑：先执行一次延迟任务，完成后开启常规循环
+      const delayTimer = setTimeout(async () => {
+        await performUpdate(profile.id)
+        
+        // 第一次补偿更新完成后，开启正常的周期循环
+        const intervalTimer = setInterval(() => performUpdate(profile.id), intervalMs)
+        autoUpdateTimers.set(profile.id, intervalTimer)
+      }, remaining)
+
+      autoUpdateInitialDelays.set(profile.id, delayTimer)
+      
+      console.log(`[AutoUpdate] ${profile.name} 调度成功：${(remaining / 1000).toFixed(1)} 秒后首次执行，后续间隔 ${profile.autoUpdateInterval} 小时`)
+    }
+  })
+}
+
+// 唯一的全局监听器：确保定时器不被意外重置
+watch(
+  () => config.value.configProfiles.map(p => `${p.id}-${p.source}-${p.autoUpdateInterval}`).join('|'),
+  (newVal, oldVal) => {
+    if (newVal !== oldVal) {
+      setupAutoUpdate()
+    }
+  },
+  { immediate: true }
+)
 
 export function useConfigStore() {
   const clashApis = computed(() => config.value.clashApis)
@@ -231,11 +333,12 @@ export function useConfigStore() {
   function updateConfigProfile(id: string, partial: Partial<Omit<ConfigProfile, 'id'>>) {
     const profile = config.value.configProfiles.find((p) => p.id === id)
     if (!profile) return
-    if (typeof partial.name === 'string') profile.name = partial.name
-    if (typeof partial.source === 'string') profile.source = partial.source
-    if (typeof partial.type === 'string') profile.type = partial.type
-    if (typeof partial.lastUpdated === 'string') profile.lastUpdated = partial.lastUpdated
-    if (typeof partial.autoUpdateInterval === 'number') profile.autoUpdateInterval = partial.autoUpdateInterval
+    Object.assign(profile, partial)
+  }
+
+  // 把手动更新的逻辑也统一到这里，避免代码重复
+  async function manualUpdateRemote(id: string) {
+    await performUpdate(id)
   }
 
   return {
@@ -259,5 +362,7 @@ export function useConfigStore() {
     removeConfigProfile,
     setActiveConfigProfile,
     updateConfigProfile,
+    manualUpdateRemote,
+    setupAutoUpdate,
   }
 }

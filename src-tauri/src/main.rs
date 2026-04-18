@@ -50,6 +50,7 @@ fn run_gui() {
             )
             .build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init()) // ✨ 新增
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -69,10 +70,18 @@ fn run_gui() {
                 .icon(app.default_window_icon().cloned().expect("app icon"))
                 .tooltip("Singboard")
                 .menu(&menu)
-                .on_tray_icon_event(move |_tray, event| {
+                // --- 显式禁用左键点击弹出菜单 ---
+                .menu_on_left_click(false) 
+                .on_tray_icon_event(move |tray, event| {
                     if let TrayIconEvent::Click { button, button_state, .. } = event {
-                        if matches!((button, button_state), (MouseButton::Left, MouseButtonState::Up)) {
-                            show_window(&app_handle);
+                        // 建议使用 MouseButtonState::Down 或 Up 的其中一个
+                        if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                            let handle = tray.app_handle();
+                            // --- 使用 async_runtime 稍微解耦，避免阻塞当前事件循环导致的 UI 冲突 ---
+                            let handle_clone = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                show_window(&handle_clone);
+                            });
                         }
                     }
                 })
@@ -126,6 +135,7 @@ fn run_gui() {
             singboard_lib::commands::srs::srs_list_provider,
             singboard_lib::commands::network::fetch_url,
             singboard_lib::commands::network::http_ping,
+            singboard_lib::commands::network::set_self_proxy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

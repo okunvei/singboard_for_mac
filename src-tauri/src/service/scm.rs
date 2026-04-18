@@ -193,51 +193,7 @@ pub fn query_service_status(service_name: &str) -> Result<ServiceStatus, String>
 pub fn start_service(service_name: &str) -> Result<(), String> {
     unsafe {
         let scm = open_scm()?;
-        let svc = open_service_handle(scm, service_name, SERVICE_START | SERVICE_QUERY_STATUS | SERVICE_STOP)?;
-
-        // Check if the service is stuck in a pending state and try to recover
-        {
-            let mut status: SERVICE_STATUS_PROCESS = std::mem::zeroed();
-            let mut bytes_needed: u32 = 0;
-            let qok = QueryServiceStatusEx(
-                svc,
-                SC_STATUS_PROCESS_INFO,
-                &mut status as *mut _ as *mut u8,
-                std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
-                &mut bytes_needed,
-            );
-            if qok != 0
-                && (status.dwCurrentState == SERVICE_START_PENDING
-                    || status.dwCurrentState == SERVICE_STOP_PENDING)
-            {
-                // Kill zombie process if it exists
-                if status.dwProcessId != 0 {
-                    let handle = windows_sys::Win32::System::Threading::OpenProcess(
-                        windows_sys::Win32::System::Threading::PROCESS_TERMINATE,
-                        0,
-                        status.dwProcessId,
-                    );
-                    if !handle.is_null() {
-                        windows_sys::Win32::System::Threading::TerminateProcess(handle, 1);
-                        windows_sys::Win32::Foundation::CloseHandle(handle);
-                    }
-                }
-                // Wait for SCM to recognize the process is gone
-                for _ in 0..20 {
-                    thread::sleep(Duration::from_millis(500));
-                    let qok2 = QueryServiceStatusEx(
-                        svc,
-                        SC_STATUS_PROCESS_INFO,
-                        &mut status as *mut _ as *mut u8,
-                        std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
-                        &mut bytes_needed,
-                    );
-                    if qok2 != 0 && status.dwCurrentState == SERVICE_STOPPED {
-                        break;
-                    }
-                }
-            }
-        }
+        let svc = open_service_handle(scm, service_name, SERVICE_START | SERVICE_QUERY_STATUS)?;
 
         let ok = StartServiceW(svc, 0, ptr::null());
 
@@ -376,26 +332,6 @@ pub fn install_service(
             let err = GetLastError();
             if err == 1073 {
                 return Ok(());
-            }
-            if err == 1072 {
-                // Service marked for deletion — wait for it to be fully removed, then retry
-                CloseServiceHandle(scm);
-                for _ in 0..10 {
-                    thread::sleep(Duration::from_millis(500));
-                    let scm2 = open_scm()?;
-                    let wide_name2 = to_wide(service_name);
-                    let test = OpenServiceW(scm2, wide_name2.as_ptr(), SERVICE_QUERY_STATUS);
-                    if test.is_null() && GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST {
-                        CloseServiceHandle(scm2);
-                        // Service is gone, retry install
-                        return install_service(service_name, bin_path, display_name);
-                    }
-                    if !test.is_null() {
-                        CloseServiceHandle(test);
-                    }
-                    CloseServiceHandle(scm2);
-                }
-                return Err("服务已被标记删除但尚未释放，请关闭服务管理器窗口后重试".into());
             }
             return Err(format!("CreateService failed: error {}", err));
         }

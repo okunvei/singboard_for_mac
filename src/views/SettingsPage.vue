@@ -363,9 +363,12 @@ async function checkVersion() {
 
 const statusColor = computed(() => {
   switch (serviceStatus.value.state) {
-    case 'running': return 'badge-success'
-    case 'stopped': return 'badge-error'
-    default: return 'badge-warning'
+    case 'running': return 'bg-success shadow-[0_0_5px_rgba(34,197,94,0.4)]'
+    case 'stopped': return 'bg-error shadow-[0_0_5px_rgba(239,68,68,0.4)]'
+    case 'starting':
+    case 'stopping': return 'bg-warning animate-pulse' // 停止时黄色警告颜色
+    case 'not_installed': return 'bg-error opacity-50' // 未安装时红颜色突出表示重要提示
+    default: return 'bg-base-content/30'
   }
 })
 
@@ -399,50 +402,20 @@ watch(
     <ConfirmDialog ref="confirmDialogRef" />
 
     <div class="bg-base-200 rounded-lg p-4 space-y-3">
-      <h2 class="font-semibold text-sm">服务控制</h2>
+      <h2 class="font-semibold text-sm">服务管理</h2>
+      <p class="text-xs opacity-60">必须安装服务，才可以启动核心</p>
       <div class="flex items-center gap-2">
-        <span class="text-sm">状态:</span>
-        <span class="badge" :class="statusColor">{{ statusText }}</span>
+        <span class="text-sm">当前状态:</span>
+        <div class="flex items-center gap-2 px-1">
+          <span class="w-2 h-2 rounded-full shrink-0" :class="statusColor"></span>
+          <span class="text-sm font-medium">{{ statusText }}</span>
+        </div>
       </div>
       <div class="flex gap-2">
-        <button
-          class="btn btn-sm btn-success"
-          :class="{ loading: actionLoading === 'start' }"
-          :disabled="serviceStatus.state === 'running'"
-          @click="handleServiceAction('start')"
-        >
-          启动
-        </button>
-        <button
-          class="btn btn-sm btn-warning"
-          :class="{ loading: actionLoading === 'restart' }"
-          @click="handleServiceAction('restart')"
-        >
-          重启
-        </button>
-        <button
-          class="btn btn-sm btn-error"
-          :class="{ loading: actionLoading === 'stop' }"
-          :disabled="serviceStatus.state === 'stopped'"
-          @click="handleServiceAction('stop')"
-        >
-          停止
-        </button>
-        <div class="divider divider-horizontal"></div>
-        <button
-          class="btn btn-sm btn-outline"
-          :class="{ loading: actionLoading === 'install' }"
-          @click="handleServiceAction('install')"
-        >
-          安装服务
-        </button>
-        <button
-          class="btn btn-sm btn-outline btn-error"
-          :class="{ loading: actionLoading === 'uninstall' }"
-          @click="handleServiceAction('uninstall')"
-        >
-          卸载服务
-        </button>
+        <button class="btn btn-sm btn-outline" :class="{ loading: actionLoading === 'install' }"
+          :disabled="serviceStatus.state !== 'not_installed'" @click="handleServiceAction('install')">安装服务</button>
+        <button class="btn btn-sm btn-outline btn-error" :class="{ loading: actionLoading === 'uninstall' }"
+          :disabled="serviceStatus.state === 'not_installed'" @click="handleServiceAction('uninstall')">卸载服务</button>
       </div>
     </div>
 
@@ -757,5 +730,22 @@ watch(
         </div>
       </div>
     </div>
+
+    <div class="bg-base-200 rounded-lg p-4 space-y-3">
+      <h2 class="font-semibold text-sm">自身代理</h2>
+      <div class="form-control">
+        <label class="label"><span class="label-text text-xs">代理地址 (HTTP/SOCKS5)</span></label>
+        <input
+          v-model="config.selfProxy"
+          type="text"
+          class="input input-sm input-bordered"
+          placeholder="例如: socks5://127.0.0.1:1080"
+        />
+        <label class="label">
+          <span class="label-text-alt text-base-content/40 text-xs">如果内容为空则不配置代理</span>
+        </label>
+      </div>
+    </div>
+
   </div>
 </template>
