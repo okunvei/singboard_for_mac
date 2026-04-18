@@ -8,14 +8,16 @@ import { useToastStore } from '@/stores/toast'
 import { getSingboxVersion, validateSingboxConfig, getRunningConfigPath, getRemoteConfigPath, copyToRunningConfig } from '@/bridge/config'
 import { startService, stopService } from '@/bridge/service'
 import { triggerNetworkRefresh } from '@/stores/overview'
+import { invoke } from '@tauri-apps/api/core'
 
 const route = useRoute()
 const router = useRouter()
 const { serviceStatus, statusText, refresh } = useServiceStore()
 const { config, configProfiles } = useConfigStore()
 const { pushToast } = useToastStore()
+
 const singboxVersion = ref('')
-const actionLoading = ref('') 
+const actionLoading = ref('')
 const versionWrapEl = ref<HTMLElement | null>(null)
 const versionTrackEl = ref<HTMLElement | null>(null)
 const shouldScrollVersion = ref(false)
@@ -33,11 +35,9 @@ const navItems = [
 ]
 
 const currentPath = computed(() => route.path)
-
 function navigate(path: string) { router.push(path) }
 
 async function refreshVersion() {
-  // 注意：删除了之前的 "if (state !== 'running') return" 判断
   const singboxPath = config.value.singboxPath?.trim()
   if (!singboxPath) {
     singboxVersion.value = '未配置内核路径'
@@ -48,16 +48,26 @@ async function refreshVersion() {
     singboxVersion.value = normalizeVersionText(raw)
   } catch (e: any) {
     const errMsg = String(e?.message || e)
-    // 捕获“找不到文件”的错误
-    if (errMsg.includes('系统找不到指定的文件') || errMsg.includes('not found') || errMsg.includes('2')) {
-      singboxVersion.value = '❌ 未安装 exe 核心'
+    if (errMsg.includes('not found') || errMsg.includes('2')) {
+      singboxVersion.value = '❌ 未找到内核文件'
     } else {
       singboxVersion.value = '版本获取失败'
     }
   }
 }
 
-// 按钮控制逻辑
+// 停止前检测系统代理是否开启，若开启则清除
+async function tryCheckAndClearProxy() {
+  try {
+    const isOn = await invoke<boolean>('check_system_proxy_inbound', { configPath: '' })
+    if (isOn) {
+      await invoke('clear_macos_system_proxy')
+    }
+  } catch {
+    // 检测失败不影响停止流程
+  }
+}
+
 async function validateBeforeStart(): Promise<boolean> {
   const { singboxPath, workingDir } = config.value
   if (!singboxPath) {
@@ -90,41 +100,39 @@ async function handleServiceAction(action: 'start' | 'stop' | 'restart') {
     const name = config.value.serviceName
     if (action === 'start' || action === 'restart') {
       if (!(await validateBeforeStart())) return
-      if (action === 'restart') await stopService(name)
+      if (action === 'restart') {
+        await tryCheckAndClearProxy()
+        await stopService(name)
+      }
       await startService(name)
     } else {
+      await tryCheckAndClearProxy()
       await stopService(name)
     }
     setTimeout(refresh, 1000)
 
     // 启动或重启核心后：若当前正在查看 OverviewPage，则触发网络信息刷新
-    // 停止核心时无需触发（NetworkInfo 内部 watch 核心状态变化会自动清空数据）
     if ((action === 'start' || action === 'restart') && route.path === '/overview') {
-      // 等待核心完成启动（比 refresh 晚一点），再发出刷新信号
       setTimeout(triggerNetworkRefresh, 1500)
     }
   } catch (e: any) {
     pushToast({ message: '操作失败: ' + e, type: 'error' })
   } finally {
-    // 延迟清除 loading 状态，覆盖 Windows 服务启动后的短暂中间抖动窗口期
-    // 避免用户在核心尚未完全就绪时误触再次点击
+    // 延迟清除 loading 状态，避免核心启动后短暂中间状态误触
     setTimeout(() => { actionLoading.value = '' }, 2000)
   }
 }
 
-// 状态颜色
 const statusColor = computed(() => {
   switch (serviceStatus.value.state) {
     case 'running': return 'bg-success shadow-[0_0_5px_rgba(34,197,94,0.4)]'
     case 'stopped': return 'bg-error shadow-[0_0_5px_rgba(239,68,68,0.4)]'
     case 'starting':
-    case 'stopping': return 'bg-warning animate-pulse' // 停止时黄色警告颜色
-    case 'not_installed': return 'bg-error opacity-50' // 未安装时红颜色突出表示重要提示
+    case 'stopping': return 'bg-warning animate-pulse'
+    case 'not_installed': return 'bg-error opacity-50'
     default: return 'bg-base-content/30'
   }
 })
-
-// 监听与尺寸测量
 
 function measureOverflow() {
   const wrap = versionWrapEl.value
@@ -145,7 +153,6 @@ watch(versionWrapEl, (el) => {
     resizeOb.observe(el)
   }
 })
-
 watch(singboxVersion, () => { requestAnimationFrame(() => measureOverflow()) })
 onBeforeUnmount(() => { resizeOb?.disconnect(); resizeOb = null })
 </script>
@@ -181,10 +188,10 @@ onBeforeUnmount(() => { resizeOb?.disconnect(); resizeOb = null })
           <span>{{ statusText }}</span>
         </div>
       </div>
-      
+
       <div class="flex flex-col gap-1">
-        <button 
-          class="btn btn-sm btn-ghost w-full justify-start font-normal hover:bg-success/10 hover:text-success text-base-content/80" 
+        <button
+          class="btn btn-sm btn-ghost w-full justify-start font-normal hover:bg-success/10 hover:text-success text-base-content/80"
           :disabled="serviceStatus.state === 'running' || serviceStatus.state === 'not_installed' || !!actionLoading"
           @click="handleServiceAction('start')"
         >
@@ -192,7 +199,7 @@ onBeforeUnmount(() => { resizeOb?.disconnect(); resizeOb = null })
           🚀 启动核心
         </button>
 
-        <button 
+        <button
           class="btn btn-sm btn-ghost w-full justify-start font-normal hover:bg-warning/10 hover:text-warning text-base-content/80"
           :disabled="serviceStatus.state === 'not_installed' || !!actionLoading"
           @click="handleServiceAction('restart')"
@@ -201,7 +208,7 @@ onBeforeUnmount(() => { resizeOb?.disconnect(); resizeOb = null })
           🔄 重启核心
         </button>
 
-        <button 
+        <button
           class="btn btn-sm btn-ghost w-full justify-start font-normal hover:bg-error/10 hover:text-error text-base-content/80"
           :disabled="serviceStatus.state === 'stopped' || serviceStatus.state === 'not_installed' || !!actionLoading"
           @click="handleServiceAction('stop')"
