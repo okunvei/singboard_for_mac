@@ -7,6 +7,7 @@ import { normalizeVersionText } from '@/utils/format'
 import { useToastStore } from '@/stores/toast'
 import { getSingboxVersion, validateSingboxConfig, getRunningConfigPath, getRemoteConfigPath, copyToRunningConfig } from '@/bridge/config'
 import { startService, stopService } from '@/bridge/service'
+import { triggerNetworkRefresh } from '@/stores/overview'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,10 +96,19 @@ async function handleServiceAction(action: 'start' | 'stop' | 'restart') {
       await stopService(name)
     }
     setTimeout(refresh, 1000)
+
+    // 启动或重启核心后：若当前正在查看 OverviewPage，则触发网络信息刷新
+    // 停止核心时无需触发（NetworkInfo 内部 watch 核心状态变化会自动清空数据）
+    if ((action === 'start' || action === 'restart') && route.path === '/overview') {
+      // 等待核心完成启动（比 refresh 晚一点），再发出刷新信号
+      setTimeout(triggerNetworkRefresh, 1500)
+    }
   } catch (e: any) {
     pushToast({ message: '操作失败: ' + e, type: 'error' })
   } finally {
-    actionLoading.value = ''
+    // 延迟清除 loading 状态，覆盖 Windows 服务启动后的短暂中间抖动窗口期
+    // 避免用户在核心尚未完全就绪时误触再次点击
+    setTimeout(() => { actionLoading.value = '' }, 2000)
   }
 }
 

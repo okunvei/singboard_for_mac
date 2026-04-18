@@ -2,45 +2,38 @@
 import { onMounted, computed } from 'vue'
 import { useOverviewStore } from '@/stores/overview'
 import { useConnectionsStore } from '@/stores/connections'
-import { useConfigStore } from '@/stores/config' // ✨ 新加：用来读取设置里的 API 和 Secret
-import { useServiceStore } from '@/stores/service' // ✨ 引入服务 Store
-import { open } from '@tauri-apps/plugin-shell' // ✨ 新加：用来调用系统浏览器
+import { useConfigStore } from '@/stores/config'
+import { useServiceStore } from '@/stores/service'
+import { triggerNetworkRefresh, autoRefreshEnabled } from '@/stores/overview'
+import { open } from '@tauri-apps/plugin-shell'
 import NetworkInfo from '@/components/overview/NetworkInfo.vue'
 import TopologyChart from '@/components/overview/TopologyChart.vue'
 import SparkLine from '@/components/overview/SparkLine.vue'
 import { formatBytes, formatSpeed } from '@/utils/format'
 
 
-const { clashApiUrl, clashApiSecret } = useConfigStore() // ✨ 新加：获取配置对象
-const { serviceStatus } = useServiceStore() // ✨ 获取服务状态
+const { clashApiUrl, clashApiSecret } = useConfigStore()
+const { serviceStatus } = useServiceStore()
 
-// ✨ 创建一个计算属性，判断是否可以点击
 const isRunning = computed(() => serviceStatus.value.state === 'running')
 
-// ✨ 新加：这个函数负责拼接地址并打开浏览器
 const openWebUI = async () => {
-  // ✨ 逻辑拦截：如果没运行，直接返回
   if (!isRunning.value) return
   
   try {
-    // 1. 直接使用 store 提供的当前激活地址和密钥
     const apiUrl = clashApiUrl.value || 'http://127.0.0.1:9090'
     const secret = clashApiSecret.value || ''
     
-    // 2. 解析 URL（提取域名和端口）
     const url = new URL(apiUrl)
     const hostname = url.hostname
     const port = url.port || (url.protocol === 'https:' ? '443' : '80')
 
-    // 3. 拼接地址：基础地址
     let targetUrl = `${apiUrl}/ui/?hostname=${hostname}&port=${port}`
 
-    // 4. 加上 secret
     if (secret) {
       targetUrl += `&secret=${secret}`
     }
 
-    // 5. 召唤系统默认浏览器
     await open(targetUrl)
   } catch (error) {
     console.error('无法解析地址，请检查配置是否正确:', error)
@@ -61,6 +54,16 @@ const connLabelFormatter = (v: number) => (v === 0 ? '' : String(Math.round(v)))
 onMounted(async () => {
   startOverview()
   startConnections()
+
+  // 进入 OverviewPage 时的网络信息刷新策略：
+  // - 核心未运行：不触发，NetworkInfo 显示「未检测」
+  // - 核心运行中 + 勾选了「自动刷新」：触发刷新（从其他页面切回时生效）
+  // - 核心运行中 + 未勾选：不触发，保留上次的检测结果
+  // 注意：软件首次启动时 sessionStorage 为空，无缓存可显示，故两种情况均显示「未检测」，
+  //       与「自动刷新」复选框的行为在视觉上一致，符合预期
+  if (isRunning.value && autoRefreshEnabled.value) {
+    triggerNetworkRefresh()
+  }
 })
 </script>
 

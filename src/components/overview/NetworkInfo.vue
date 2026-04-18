@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import { useServiceStore } from '@/stores/service'
+import { networkRefreshSignal, autoRefreshEnabled } from '@/stores/overview'
 import { getIPFromIpipnet, getIPFromIpsb } from '@/api/geoip'
 import {
   getWechatLatency,
@@ -48,6 +49,22 @@ const latency = ref<LatencyData>(cached?.latency ?? {
 })
 const latencyLoading = ref(false)
 
+// 组件存活时监听核心状态：停止则立即清空内存中的显示数据
+// sessionStorage 缓存由 overview.ts 模块级 watch 负责清除（覆盖组件未挂载的情况）
+const { serviceStatus } = useServiceStore()
+watch(
+  () => serviceStatus.value.state,
+  (state) => {
+    if (state !== 'running') {
+      chinaIP.value = { ip: '', location: '', locationMasked: '' }
+      globalIP.value = { ip: '', location: '', locationMasked: '' }
+      latency.value = { wechat: '', bilibili: '', github: '', cloudflare: '', youtube: '' }
+      ipLoading.value = false
+      latencyLoading.value = false
+    }
+  },
+)
+
 function maskIP(ip: string) {
   if (!ip) return ''
   return ip.replace(/\d/g, '*').replace(/[a-fA-F]/g, '*')
@@ -60,7 +77,6 @@ function latencyTextColor(ms: string) {
   if (n < 500) return 'text-warning'
   return 'text-error'
 }
-
 
 async function checkIP() {
   if (ipLoading.value) return
@@ -119,27 +135,27 @@ async function checkLatency() {
   getYoutubeLatency().then((ms) => { latency.value.youtube = ms ? ms.toFixed(0) : '超时' }).finally(onDone)
 }
 
-const { serviceStatus } = useServiceStore()
-const isRunning = computed(() => serviceStatus.value.state === 'running')
-
-if (!cached && isRunning.value) {
+// 监听刷新信号：由 OverviewPage（页面进入）或 Sidebar（启动/重启核心）发出
+// 信号每次自增即触发一次完整刷新；NetworkInfo 自身不主动判断时机，只响应信号
+watch(networkRefreshSignal, () => {
   checkIP()
   checkLatency()
-}
-
-watch(isRunning, (running) => {
-  if (!running) {
-    sessionStorage.removeItem(CACHE_KEY)
-    chinaIP.value = { ip: '', location: '', locationMasked: '' }
-    globalIP.value = { ip: '', location: '', locationMasked: '' }
-    latency.value = { wechat: '', bilibili: '', github: '', cloudflare: '', youtube: '' }
-  }
 })
 </script>
 
 <template>
   <div class="bg-base-200 rounded-lg p-4 space-y-3">
-    <h2 class="text-sm font-semibold">网络信息</h2>
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-semibold">网络信息</h2>
+      <label class="flex items-center gap-1.5 cursor-pointer select-none text-xs text-base-content/60">
+        <input
+          type="checkbox"
+          class="checkbox checkbox-xs"
+          v-model="autoRefreshEnabled"
+        />
+        自动刷新
+      </label>
+    </div>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <div class="bg-base-300/50 rounded-lg p-3 space-y-2 relative">
         <div class="text-xs font-medium text-base-content/60 mb-2">IP 信息</div>
