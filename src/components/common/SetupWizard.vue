@@ -72,7 +72,7 @@ async function saveSetup() {
   try {
     const detected = await detectRuntimeFiles(workingDir)
     if (!detected.singboxPath) {
-      setupError.value = '未在该目录及子目录中检测到 sing-box 核心，请检查目录后重试。'
+      setupError.value = '未在该目录及子目录中检测到名字为 sing-box 的内核文件，请检查目录后重试。'
       return
     }
 
@@ -131,7 +131,7 @@ defineExpose({ checkAndOpen })
             v-model="setupForm.workingDir"
             type="text"
             class="input input-sm input-bordered flex-1"
-            placeholder="C:\sing-box"
+            placeholder="请确保选择的目录包含sing-box内核文件"
           />
           <button class="btn btn-sm btn-outline shrink-0" @click="browseWorkingDir">浏览</button>
         </div>

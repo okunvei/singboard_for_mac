@@ -38,3 +38,6 @@ Desktop.ini
 *.bak
 *.swp
 *.swo
+
+# Helper 编译产物（由 CI 自动生成）
+src-tauri/binaries/singboard-helper-*

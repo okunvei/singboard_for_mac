@@ -2,6 +2,7 @@ import { ref, computed, onUnmounted, watch } from 'vue'
 import { createClashWS } from '@/api/websocket'
 import { disconnectAll, disconnectById } from '@/api'
 import { useConfigStore } from './config'
+import { useServiceStore } from './service'
 import { appVisible } from './appVisible'
 import { pushConnectionCount } from './overview'
 import type { Connection, ConnectionsSnapshot } from '@/types'
@@ -17,6 +18,22 @@ const filterText = ref('')
 let ws: ReconnectingWebSocket | null = null
 let prevTraffic = new Map<string, { download: number; upload: number }>()
 let refCount = 0
+
+// 模块级：监听核心状态，停止时立即重置所有连接数据
+// 放在模块顶层确保无论当前在哪个界面都生效，不会因组件卸载而失效
+const { serviceStatus: _serviceStatus } = useServiceStore()
+watch(
+  () => _serviceStatus.value.state,
+  (state, prevState) => {
+    if (state !== 'running' && prevState !== 'unknown') {
+      connections.value = []
+      downloadTotal.value = 0
+      uploadTotal.value = 0
+      closedConnections.value = []
+      prevTraffic = new Map()
+    }
+  },
+)
 
 function matchesFilter(c: Connection, q: string): boolean {
   const m = c.metadata

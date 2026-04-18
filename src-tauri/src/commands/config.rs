@@ -206,7 +206,7 @@ async fn run_singbox_check(
     let output = tokio::process::Command::new(&singbox_path)
         .args(["check", "-c", &config_path])
         .current_dir(&cwd)
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        
         .output()
         .await
         .map_err(|e| format!("Failed to run sing-box check: {}", e))?;

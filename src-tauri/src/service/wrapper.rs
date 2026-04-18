@@ -1,272 +1,221 @@
-use std::ffi::OsString;
-use std::fs;
-use std::io::Read as _;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
-
-use windows_service::service::{
-    ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState,
-    ServiceStatus, ServiceType,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
-use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
-use windows_service::service_dispatcher;
+use std::time::{Duration, Instant};
 
-use super::scm::{read_service_params, resolve_service_error_log_path};
+use super::scm::read_service_params;
+use serde_json::Value;
 
-static SERVICE_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
-const STARTUP_VERIFY_SECONDS: u64 = 2;
-const STARTUP_RETRY_DELAY_SECONDS: u64 = 5;
-const STARTUP_MAX_ATTEMPTS: u32 = 3;
+// 启动日志记录时长（秒）
+const STARTUP_LOG_SECONDS: u64 = 10;
 
-fn get_service_name() -> &'static str {
-    SERVICE_NAME.get().map(|s| s.as_str()).unwrap_or("sing-box")
-}
-
+/// macOS 入口：直接在当前进程里运行服务逻辑（无需 service_dispatcher）。
+/// main.rs 检测到 "service" 子命令后调用此函数。
 pub fn run_service(service_name: &str) -> Result<(), String> {
-    SERVICE_NAME.set(service_name.to_string()).ok();
-    service_dispatcher::start(get_service_name(), ffi_service_main)
-        .map_err(|e| format!("Failed to start service dispatcher: {:?}", e))
-}
+    // 优先从环境变量读取参数（launchd plist 注入），
+    // 其次回退到持久化文件（params.json）。
+    let (singbox_path, config_path, working_dir) = {
+        let env_singbox = std::env::var("SINGBOARD_SINGBOX_PATH").unwrap_or_default();
+        let env_config = std::env::var("SINGBOARD_CONFIG_PATH").unwrap_or_default();
+        let env_workdir = std::env::var("SINGBOARD_WORKING_DIR").unwrap_or_default();
 
-windows_service::define_windows_service!(ffi_service_main, service_main);
-
-fn service_main(arguments: Vec<OsString>) {
-    if let Err(e) = run_service_inner(arguments) {
-        eprintln!("Service error: {}", e);
-    }
-}
-
-fn make_stopped_status() -> ServiceStatus {
-    ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: ServiceState::Stopped,
-        controls_accepted: ServiceControlAccept::empty(),
-        exit_code: ServiceExitCode::Win32(1),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    }
-}
-
-fn read_stderr_output(child: &mut Child) -> Option<String> {
-    if let Some(ref mut stderr) = child.stderr {
-        let mut output = String::new();
-        let _ = stderr.read_to_string(&mut output);
-        if !output.trim().is_empty() {
-            return Some(output.trim().to_string());
-        }
-    }
-    None
-}
-
-fn save_error_log(log_path: &std::path::Path, message: &str) {
-    let _ = fs::write(log_path, message);
-}
-
-fn run_service_inner(_arguments: Vec<OsString>) -> Result<(), String> {
-    let (tx, rx) = mpsc::channel();
-
-    let event_handler = move |control_event| -> ServiceControlHandlerResult {
-        match control_event {
-            ServiceControl::Stop | ServiceControl::Shutdown => {
-                let _ = tx.send(());
-                ServiceControlHandlerResult::NoError
-            }
-            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-            _ => ServiceControlHandlerResult::NotImplemented,
+        if !env_singbox.is_empty() && !env_config.is_empty() {
+            (env_singbox, env_config, env_workdir)
+        } else {
+            read_service_params(service_name)?
         }
     };
 
-    let svc_name = get_service_name();
-    let status_handle = service_control_handler::register(svc_name, event_handler)
-        .map_err(|e| format!("Failed to register service control handler: {:?}", e))?;
+    let (runtime_config, use_user_log) =
+        process_config_logic(&config_path, service_name)?;
 
-    status_handle
-        .set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::StartPending,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::from_secs(10),
-            process_id: None,
-        })
-        .map_err(|e| format!("Failed to set status: {:?}", e))?;
-
-    let (singbox_path, config_path, working_dir) = match read_service_params(svc_name) {
-        Ok(v) => v,
-        Err(e) => {
-            status_handle.set_service_status(make_stopped_status()).ok();
-            return Err(e);
-        }
-    };
-    let log_path = resolve_service_error_log_path(svc_name);
-
-    // 启动前清除旧的错误日志
+    let log_path = PathBuf::from(&config_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(get_appdata_dir)
+        .join("startup.log");
     let _ = fs::remove_file(&log_path);
 
-    let mut child: Option<Child> = None;
-    let mut startup_succeeded = false;
+    let mut child = spawn_singbox(&singbox_path, &runtime_config, &working_dir, use_user_log)?;
 
-    for attempt in 1..=STARTUP_MAX_ATTEMPTS {
-        let mut current_child = match spawn_singbox(&singbox_path, &config_path, &working_dir) {
-            Ok(c) => c,
-            Err(e) => {
-                save_error_log(&log_path, &e);
-                status_handle.set_service_status(make_stopped_status()).ok();
-                return Err(e);
-            }
-        };
-
-        // 等待 2 秒验证进程是否存活
-        std::thread::sleep(Duration::from_secs(STARTUP_VERIFY_SECONDS));
-        match current_child.try_wait() {
-            Ok(Some(_)) => {
-                if let Some(stderr_output) = read_stderr_output(&mut current_child) {
-                    // 核心有明确报错，直接失败，不做重试
-                    save_error_log(&log_path, &stderr_output);
-                    status_handle.set_service_status(make_stopped_status()).ok();
-                    return Err("sing-box 启动失败，核心已输出错误日志".into());
-                }
-
-                // 未捕获到核心错误输出，仅在这种情况下进行重试
-                if attempt < STARTUP_MAX_ATTEMPTS {
-                    for _ in 0..STARTUP_RETRY_DELAY_SECONDS {
-                        match rx.recv_timeout(Duration::from_secs(1)) {
-                            Ok(()) => {
-                                status_handle.set_service_status(make_stopped_status()).ok();
-                                return Ok(());
-                            }
-                            Err(mpsc::RecvTimeoutError::Timeout) => {}
-                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        }
-                    }
-                    continue;
-                }
-
-                save_error_log(&log_path, "sing-box 启动后立即退出，未捕获到错误输出");
-                status_handle.set_service_status(make_stopped_status()).ok();
-                return Err("sing-box 启动失败，已重试 2 次".into());
-            }
-            Ok(None) => {
-                child = Some(current_child);
-                startup_succeeded = true;
-                break;
-            }
-            Err(e) => {
-                status_handle.set_service_status(make_stopped_status()).ok();
-                return Err(format!("检查 sing-box 进程状态失败: {}", e));
-            }
-        }
+    if !use_user_log {
+        pump_logs(&mut child, log_path);
     }
 
-    if !startup_succeeded {
-        status_handle.set_service_status(make_stopped_status()).ok();
-        return Err("sing-box 启动失败，未进入运行状态".into());
+    // 等待 2 秒确认进程没有立即崩溃
+    std::thread::sleep(Duration::from_secs(2));
+    if let Ok(Some(_)) = child.try_wait() {
+        return Err("sing-box 启动失败，请检查 startup.log".into());
     }
-    let mut child = match child {
-        Some(c) => c,
-        None => {
-            status_handle.set_service_status(make_stopped_status()).ok();
-            return Err("sing-box 启动失败，未获取到核心进程句柄".into());
-        }
-    };
 
-    // 进程存活，设置为 Running
-    status_handle
-        .set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })
-        .map_err(|e| format!("Failed to set status: {:?}", e))?;
+    // 监听 SIGTERM / SIGINT，收到后终止子进程
+    let running = Arc::new(AtomicBool::new(true));
+    {
+        let running = running.clone();
+        // 安全：使用 signal_hook 通过管道通知；这里用更简单的轮询方案
+        // 注册 ctrlc（包含 SIGTERM）处理
+        let _ = ctrlc::set_handler(move || {
+            running.store(false, Ordering::SeqCst);
+        });
+    }
 
     loop {
-        match rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(()) => {
-                // 收到停止信号
-                break;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                match child.try_wait() {
-                    Ok(Some(_status)) => {
-                        // 核心进程退出，收集错误信息，不再重试
-                        if let Some(stderr_output) = read_stderr_output(&mut child) {
-                            save_error_log(&log_path, &stderr_output);
-                        } else {
-                            save_error_log(&log_path, "sing-box 异常退出，未捕获到错误输出");
-                        }
-                        break;
-                    }
-                    Ok(None) => {
-                        // 核心正常运行
-                    }
-                    Err(_) => break,
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        if !running.load(Ordering::SeqCst) {
+            break;
         }
+        // 子进程自行退出也结束循环
+        if let Ok(Some(_)) = child.try_wait() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
-
-    status_handle
-        .set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::StopPending,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::from_secs(10),
-            process_id: None,
-        })
-        .ok();
 
     let _ = child.kill();
     let _ = child.wait();
-
-    status_handle
-        .set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::Stopped,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })
-        .ok();
-
     Ok(())
 }
 
-fn spawn_singbox(singbox_path: &str, config_path: &str, working_dir: &str) -> Result<Child, String> {
-    let work_dir = if working_dir.is_empty() {
-        let config = std::path::Path::new(config_path);
-        config.parent()
-            .map(|p| p.to_path_buf())
-            .or_else(|| {
-                let singbox = std::path::Path::new(singbox_path);
-                singbox.parent().map(|p| p.to_path_buf())
-            })
-            .ok_or_else(|| "WorkingDir is empty and cannot be inferred from configPath or singboxPath".to_string())?
+// ── 配置处理（逻辑与 Windows 版完全一致） ───────────────────────────────────
+
+fn process_config_logic(config_path: &str, svc_name: &str) -> Result<(String, bool), String> {
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("读取配置失败: {}", e))?;
+    let mut json: Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {}", e))?;
+
+    let log_node = json.get("log");
+    let disabled = log_node
+        .and_then(|l| l.get("disabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let output = log_node
+        .and_then(|l| l.get("output"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let use_user_log = !disabled && !output.trim().is_empty();
+
+    if use_user_log {
+        Ok((config_path.to_string(), true))
     } else {
-        std::path::PathBuf::from(working_dir)
+        if let Some(obj) = json.get_mut("log").and_then(|l| l.as_object_mut()) {
+            obj.insert("level".to_string(), Value::String("trace".to_string()));
+            obj.insert("disabled".to_string(), Value::Bool(false));
+            obj.insert("output".to_string(), Value::String("".to_string()));
+        } else {
+            json["log"] = serde_json::json!({
+                "level": "trace",
+                "disabled": false,
+                "timestamp": true,
+                "output": ""
+            });
+        }
+
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(format!("{}_runtime.json", svc_name));
+
+        fs::write(&temp_path, serde_json::to_string_pretty(&json).unwrap())
+            .map_err(|e| format!("写入临时配置失败: {}", e))?;
+
+        Ok((temp_path.to_string_lossy().to_string(), false))
+    }
+}
+
+// ── 进程启动 ─────────────────────────────────────────────────────────────────
+
+fn spawn_singbox(
+    singbox_path: &str,
+    runtime_config: &str,
+    working_dir: &str,
+    use_user_log: bool,
+) -> Result<Child, String> {
+    let work_dir = if working_dir.is_empty() {
+        PathBuf::from(runtime_config)
+            .parent()
+            .unwrap_or(&PathBuf::from("."))
+            .to_path_buf()
+    } else {
+        PathBuf::from(working_dir)
     };
 
-    if !work_dir.is_dir() {
-        return Err(format!("Working directory does not exist: {}", work_dir.display()));
+    let mut cmd = Command::new(singbox_path);
+    cmd.args(["run", "-c", runtime_config, "-D", &work_dir.to_string_lossy()]);
+    cmd.current_dir(&work_dir);
+
+    if use_user_log {
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    } else {
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
     }
 
-    let mut cmd = Command::new(singbox_path);
-    cmd.args(["run", "-c", config_path, "-D", &work_dir.to_string_lossy()])
-        .current_dir(&work_dir)
-        .stderr(Stdio::piped());
+    cmd.spawn().map_err(|e| format!("进程启动异常: {}", e))
+}
 
-    cmd.spawn()
-        .map_err(|e| format!("Failed to spawn sing-box: {}", e))
+// ── 日志泵（与 Windows 版逻辑完全一致） ─────────────────────────────────────
+
+fn pump_logs(child: &mut Child, log_path: PathBuf) {
+    let start_time = Instant::now();
+
+    if let Some(stdout) = child.stdout.take() {
+        let path = log_path.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut file = File::create(path).ok();
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok() {
+                if line.is_empty() {
+                    break;
+                }
+                if start_time.elapsed().as_secs() < STARTUP_LOG_SECONDS {
+                    if let Some(f) = file.as_mut() {
+                        let _ = f.write_all(line.as_bytes());
+                        let _ = f.flush();
+                    }
+                } else {
+                    file = None;
+                }
+                line.clear();
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        let path = log_path.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut file = File::options().append(true).create(true).open(path).ok();
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok() {
+                if line.is_empty() {
+                    break;
+                }
+                if start_time.elapsed().as_secs() < STARTUP_LOG_SECONDS {
+                    if let Some(f) = file.as_mut() {
+                        let _ = f.write_all(line.as_bytes());
+                        let _ = f.flush();
+                    }
+                } else {
+                    file = None;
+                }
+                line.clear();
+            }
+        });
+    }
+}
+
+// ── 路径辅助 ─────────────────────────────────────────────────────────────────
+
+fn get_appdata_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home)
+        .join("Library/Application Support/singboard")
 }

@@ -14,7 +14,8 @@ const api = axios.create({
 })
 
 api.interceptors.request.use((cfg) => {
-  const { clashApiUrl, clashApiSecret } = useConfigStore()
+  // 这里增加了 selfProxy
+  const { clashApiUrl, clashApiSecret, config } = useConfigStore()
   cfg.baseURL = clashApiUrl.value
   if (clashApiSecret.value) {
     cfg.headers.Authorization = `Bearer ${clashApiSecret.value}`
