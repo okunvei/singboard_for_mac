@@ -32,7 +32,10 @@ function saveCache() {
   }))
 }
 
-const cached = loadCache()
+const { serviceStatus } = useServiceStore()
+const isRunning = computed(() => serviceStatus.value.state === 'running')
+
+const cached = isRunning.value ? loadCache() : null
 
 const chinaIP = ref<IPData>(cached?.chinaIP ?? { ip: '', location: '', locationMasked: '' })
 const globalIP = ref<IPData>(cached?.globalIP ?? { ip: '', location: '', locationMasked: '' })
@@ -48,6 +51,20 @@ const latency = ref<LatencyData>(cached?.latency ?? {
 })
 const latencyLoading = ref(false)
 
+let ipGen = 0
+let latencyGen = 0
+
+function resetData() {
+  sessionStorage.removeItem(CACHE_KEY)
+  ipGen++
+  latencyGen++
+  ipLoading.value = false
+  latencyLoading.value = false
+  chinaIP.value = { ip: '', location: '', locationMasked: '' }
+  globalIP.value = { ip: '', location: '', locationMasked: '' }
+  latency.value = { wechat: '', bilibili: '', github: '', cloudflare: '', youtube: '' }
+}
+
 function maskIP(ip: string) {
   if (!ip) return ''
   return ip.replace(/\d/g, '*').replace(/[a-fA-F]/g, '*')
@@ -61,16 +78,16 @@ function latencyTextColor(ms: string) {
   return 'text-error'
 }
 
-
 async function checkIP() {
   if (ipLoading.value) return
-
   ipLoading.value = true
+  const gen = ++ipGen
   chinaIP.value = { ip: '', location: '检测中...', locationMasked: '检测中...' }
   globalIP.value = { ip: '', location: '检测中...', locationMasked: '检测中...' }
 
   try {
     const res = await getIPFromIpipnet()
+    if (gen !== ipGen) return
     const loc = res.location.filter(Boolean)
     chinaIP.value = {
       ip: res.ip,
@@ -80,11 +97,13 @@ async function checkIP() {
         : '',
     }
   } catch {
+    if (gen !== ipGen) return
     chinaIP.value = { ip: '', location: '检测失败', locationMasked: '检测失败' }
   }
 
   try {
     const res = await getIPFromIpsb()
+    if (gen !== ipGen) return
     const loc = [res.country, res.organization].filter(Boolean).join(' ')
     globalIP.value = {
       ip: res.ip,
@@ -92,19 +111,24 @@ async function checkIP() {
       locationMasked: loc,
     }
   } catch {
+    if (gen !== ipGen) return
     globalIP.value = { ip: '', location: '检测失败', locationMasked: '检测失败' }
   }
 
+  if (gen !== ipGen) return
   ipLoading.value = false
   saveCache()
 }
 
 async function checkLatency() {
+  if (latencyLoading.value) return
   latencyLoading.value = true
+  const gen = ++latencyGen
   latency.value = { wechat: '...', bilibili: '...', github: '...', cloudflare: '...', youtube: '...' }
 
   let done = 0
   const onDone = () => {
+    if (gen !== latencyGen) return
     done++
     if (done >= 5) {
       latencyLoading.value = false
@@ -112,27 +136,28 @@ async function checkLatency() {
     }
   }
 
-  getWechatLatency().then((ms) => { latency.value.wechat = ms ? ms.toFixed(0) : '超时' }).finally(onDone)
-  getBilibiliLatency().then((ms) => { latency.value.bilibili = ms ? ms.toFixed(0) : '超时' }).finally(onDone)
-  getGithubLatency().then((ms) => { latency.value.github = ms ? ms.toFixed(0) : '超时' }).finally(onDone)
-  getCloudflareLatency().then((ms) => { latency.value.cloudflare = ms ? ms.toFixed(0) : '超时' }).finally(onDone)
-  getYoutubeLatency().then((ms) => { latency.value.youtube = ms ? ms.toFixed(0) : '超时' }).finally(onDone)
-}
+  const write = (key: keyof LatencyData, ms: number) => {
+    if (gen === latencyGen) latency.value[key] = ms ? ms.toFixed(0) : '超时'
+  }
 
-const { serviceStatus } = useServiceStore()
-const isRunning = computed(() => serviceStatus.value.state === 'running')
+  getWechatLatency().then((ms) => write('wechat', ms)).finally(onDone)
+  getBilibiliLatency().then((ms) => write('bilibili', ms)).finally(onDone)
+  getGithubLatency().then((ms) => write('github', ms)).finally(onDone)
+  getCloudflareLatency().then((ms) => write('cloudflare', ms)).finally(onDone)
+  getYoutubeLatency().then((ms) => write('youtube', ms)).finally(onDone)
+}
 
 if (!cached && isRunning.value) {
   checkIP()
   checkLatency()
 }
 
-watch(isRunning, (running) => {
-  if (!running) {
-    sessionStorage.removeItem(CACHE_KEY)
-    chinaIP.value = { ip: '', location: '', locationMasked: '' }
-    globalIP.value = { ip: '', location: '', locationMasked: '' }
-    latency.value = { wechat: '', bilibili: '', github: '', cloudflare: '', youtube: '' }
+watch(() => serviceStatus.value.state, (state, oldState) => {
+  if (state !== 'running' && oldState === 'running') {
+    resetData()
+  } else if (state === 'running' && oldState !== 'running') {
+    checkIP()
+    checkLatency()
   }
 })
 </script>

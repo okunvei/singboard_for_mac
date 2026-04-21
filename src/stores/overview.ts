@@ -103,6 +103,13 @@ export function useOverviewStore() {
     if (refCount === 0) stop()
   })
 
+  function resetHistory() {
+    uploadSpeedHistory.value = initHistory()
+    downloadSpeedHistory.value = initHistory()
+    memoryHistory.value = initHistory()
+    connectionsHistory.value = initHistory()
+  }
+
   return {
     uploadSpeedHistory,
     downloadSpeedHistory,
@@ -112,5 +119,6 @@ export function useOverviewStore() {
     memory,
     start,
     stop,
+    resetHistory,
   }
 }
