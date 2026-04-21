@@ -336,7 +336,7 @@ export function useProxiesStore() {
       if (config.value.ipv6TestEnabled) saveIPv6Map()
     } else {
       if (config.value.ipv6TestEnabled) {
-        testGroupLatency(groupName, IPV6_TEST_URL, IPV6_TEST_TIMEOUT)
+        await testGroupLatency(groupName, IPV6_TEST_URL, IPV6_TEST_TIMEOUT)
           .then(({ data }) => {
             const results = data as Record<string, number>
             for (const [name, delay] of Object.entries(results)) {
