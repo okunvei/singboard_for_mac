@@ -10,6 +10,7 @@ import { useProxiesStore } from '@/stores/proxies'
 import { useOverviewStore } from '@/stores/overview'
 import { useConnectionsStore } from '@/stores/connections'
 import { copyToRunningConfig, getRemoteConfigPath } from '@/bridge/config'
+import { useConfigAutoUpdate } from '@/composables/useConfigAutoUpdate'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getIPFromIpipnet, getIPFromIpsb } from '@/api/geoip'
 import {
@@ -22,6 +23,7 @@ import {
 
 const { config, configProfiles } = useConfigStore()
 const { serviceStatus, ready: serviceReady } = useServiceStore()
+const { start: startAutoUpdate } = useConfigAutoUpdate()
 const { loadProxies, resumePendingTests } = useProxiesStore()
 const { resetHistory: resetOverviewHistory } = useOverviewStore()
 const { resetOnRestart: resetConnections } = useConnectionsStore()
@@ -106,6 +108,7 @@ onMounted(async () => {
   await syncActiveConfigToRunning()
   await loadProxies()
   resumePendingTests()
+  startAutoUpdate()
 })
 
 let coreStartedOnce = false
