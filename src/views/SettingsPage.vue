@@ -432,6 +432,7 @@ watch(
         <button
           class="btn btn-sm btn-outline"
           :class="{ loading: actionLoading === 'install' }"
+          :disabled="serviceStatus.state !== 'not_installed'"
           @click="handleServiceAction('install')"
         >
           安装服务
@@ -439,6 +440,7 @@ watch(
         <button
           class="btn btn-sm btn-outline btn-error"
           :class="{ loading: actionLoading === 'uninstall' }"
+          :disabled="serviceStatus.state === 'not_installed'"
           @click="handleServiceAction('uninstall')"
         >
           卸载服务
