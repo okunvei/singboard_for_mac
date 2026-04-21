@@ -188,12 +188,12 @@ export function useProxiesStore() {
     return proxyNode?.testUrl || defaultUrl
   }
 
-  async function loadProxies() {
+  async function loadProxies(fresh = false) {
     loading.value = true
     const nowTime = Date.now()
     fetchTime = nowTime
-    const previousMap = proxyMap.value
-    const storedLatencyHistoryMap = loadLatencyHistoryMap()
+    const previousMap = fresh ? {} : proxyMap.value
+    const storedLatencyHistoryMap = fresh ? {} : loadLatencyHistoryMap()
     try {
       const [{ data }, providersRes] = await Promise.all([
         fetchProxies(),
@@ -231,19 +231,25 @@ export function useProxiesStore() {
         }
       }
 
-      for (const [name, proxy] of Object.entries(merged)) {
-        const previous = previousMap[name]
-        const storedHistory = storedLatencyHistoryMap[name]
-        if (!previous && !storedHistory) continue
+      if (!fresh) {
+        for (const [name, proxy] of Object.entries(merged)) {
+          const previous = previousMap[name]
+          const storedHistory = storedLatencyHistoryMap[name]
+          if (!previous && !storedHistory) continue
 
-        const localHistory = pickNewerHistory(previous?.history, storedHistory)
-        merged[name] = {
-          ...proxy,
-          history: pickNewerHistory(proxy.history, localHistory),
+          const localHistory = pickNewerHistory(previous?.history, storedHistory)
+          merged[name] = {
+            ...proxy,
+            history: pickNewerHistory(proxy.history, localHistory),
+          }
         }
       }
       proxyMap.value = merged
-      persistLatencyHistoryMap()
+      if (fresh) {
+        flushLatencyHistoryMap()
+      } else {
+        persistLatencyHistoryMap()
+      }
 
       for (const [name, proxy] of Object.entries(proxyMap.value)) {
         const ipv6History = proxy.extra?.[IPV6_TEST_URL]?.history

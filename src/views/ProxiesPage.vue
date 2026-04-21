@@ -194,7 +194,7 @@ onMounted(() => {
 
 watch(isRunning, (running) => {
   if (running) {
-    loadProxies()
+    loadProxies(true)
     loadProviders()
     startConnections()
   }
