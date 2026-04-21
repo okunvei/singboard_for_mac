@@ -351,14 +351,24 @@ export function useProxiesStore() {
             saveIPv6Map()
           })
       }
+      const now = new Date().toISOString()
       try {
         const { data } = await testGroupLatency(groupName, url, Math.max(5000, LATENCY_TIMEOUT))
         const results = data as Record<string, number>
-        const now = new Date().toISOString()
+        const tested = new Set(Object.keys(results))
         for (const [name, delay] of Object.entries(results)) {
           appendProxyHistory(name, delay, now)
         }
-      } catch { }
+        for (const name of group.all!) {
+          if (!tested.has(name)) {
+            appendProxyHistory(name, 0, now)
+          }
+        }
+      } catch {
+        for (const name of group.all!) {
+          appendProxyHistory(name, 0, now)
+        }
+      }
     }
 
     flushLatencyHistoryMap()
