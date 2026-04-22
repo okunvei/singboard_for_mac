@@ -105,7 +105,8 @@ function normalizeConfig(raw: any): AppConfig {
       : {},
     configProfiles,
     activeConfigProfileId,
-    closeToTray: typeof raw?.closeToTray === 'boolean' ? raw.closeToTray : false,
+    closeToTray: typeof raw?.closeToTray === 'boolean' ? raw.closeToTray : true,
+    selfProxy: typeof raw?.selfProxy === 'string' ? raw.selfProxy : '',
   }
 }
 
@@ -136,6 +137,12 @@ watch(config, (val) => {
 invoke('set_close_to_tray', { enabled: config.value.closeToTray }).catch(() => {})
 watch(() => config.value.closeToTray, (val) => {
   invoke('set_close_to_tray', { enabled: val }).catch(() => {})
+})
+
+// 同步自身代理状态到 Rust 后端
+invoke('set_self_proxy', { proxy: config.value.selfProxy }).catch(() => {})
+watch(() => config.value.selfProxy, (val) => {
+  invoke('set_self_proxy', { proxy: val }).catch(() => {})
 })
 
 export function useConfigStore() {
