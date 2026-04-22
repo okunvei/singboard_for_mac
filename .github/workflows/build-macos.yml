@@ -1,0 +1,170 @@
+name: Build Singboard macOS
+on:
+  workflow_dispatch:
+    inputs:
+      build_arm64:
+        description: 'darwin-arm64（Apple Silicon）'
+        type: boolean
+        default: true
+      build_x86_64:
+        description: 'darwin-amd64（Intel）'
+        type: boolean
+        default: true
+permissions:
+  contents: write
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          if [ "${{ inputs.build_arm64 }}" = "false" ] && [ "${{ inputs.build_x86_64 }}" = "false" ]; then
+            echo "错误：至少需要选择一个编译目标"
+            exit 1
+          fi
+
+      - name: Read meta & Set timestamp
+        id: meta
+        run: |
+          COMMIT_SHORT=$(git rev-parse --short=7 HEAD)
+          DATETIME=$(date +'%Y%m%d-%H%M%S')
+          echo "commit_short=$COMMIT_SHORT" >> $GITHUB_OUTPUT
+          echo "datetime=$DATETIME" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target/aarch64-apple-darwin
+            src-tauri/target/x86_64-apple-darwin
+          key: macos-universal-cargo-${{ hashFiles('src-tauri/Cargo.toml') }}
+          restore-keys: |
+            macos-universal-cargo-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # ── arm64 ───────────────────────────────────────────────────────────────
+      - name: Build helper binary (arm64)
+        if: inputs.build_arm64
+        run: |
+          cargo build --release --target aarch64-apple-darwin --bin singboard-helper \
+            --manifest-path src-tauri/Cargo.toml
+          cp src-tauri/target/aarch64-apple-darwin/release/singboard-helper \
+             src-tauri/binaries/singboard-helper-aarch64-apple-darwin
+
+      - name: Build Tauri App (arm64)
+        if: inputs.build_arm64
+        run: pnpm tauri build --target aarch64-apple-darwin --bundles app
+
+      # ── x86_64 ──────────────────────────────────────────────────────────────
+      - name: Build helper binary (x86_64)
+        if: inputs.build_x86_64
+        run: |
+          cargo build --release --target x86_64-apple-darwin --bin singboard-helper \
+            --manifest-path src-tauri/Cargo.toml
+          cp src-tauri/target/x86_64-apple-darwin/release/singboard-helper \
+             src-tauri/binaries/singboard-helper-x86_64-apple-darwin
+
+      - name: Build Tauri App (x86_64)
+        if: inputs.build_x86_64
+        run: pnpm tauri build --target x86_64-apple-darwin --bundles app
+
+      # ── Package ─────────────────────────────────────────────────────────────
+      - name: Prepare & Zip
+        run: |
+          COMMIT="${{ steps.meta.outputs.commit_short }}"
+          DATETIME="${{ steps.meta.outputs.datetime }}"
+          mkdir -p release-assets
+
+          package_arch() {
+            local ARCH="$1"
+            local ARCH_LABEL="$2"
+            local ZIP_NAME="Singboard-macos-${ARCH_LABEL}-build-${COMMIT}-${DATETIME}.zip"
+            local BUNDLE_DIR="src-tauri/target/${ARCH}/release/bundle/macos"
+
+            echo "=== ${ARCH_LABEL}: 打包过程 ==="
+            if [ ! -d "$BUNDLE_DIR" ]; then
+              echo "跳过：目录不存在 $BUNDLE_DIR"
+              return 0
+            fi
+
+            local APP_PATH
+            APP_PATH=$(find "$BUNDLE_DIR" -maxdepth 1 -name "*.app" -type d | head -1)
+            if [ -z "$APP_PATH" ]; then
+              echo "错误：找不到 ${ARCH_LABEL} 的 .app 包"
+              exit 1
+            fi
+
+            ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$ZIP_NAME"
+            echo "已打包: $ZIP_NAME"
+          }
+
+          # 改用 if 语句避免退出码错误
+          if [ "${{ inputs.build_arm64 }}" = "true" ]; then
+            package_arch "aarch64-apple-darwin" "arm64"
+          fi
+
+          if [ "${{ inputs.build_x86_64 }}" = "true" ]; then
+            package_arch "x86_64-apple-darwin" "x86_64"
+          fi
+
+      # ── Release ─────────────────────────────────────────────────────────────
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ steps.meta.outputs.datetime }}-${{ steps.meta.outputs.commit_short }}
+          name: Singboard macOS Build (${{ steps.meta.outputs.datetime }})
+          body: |
+            ### 编译信息
+            - **分支**: `${{ github.ref_name }}`
+            - **提交号**: `${{ steps.meta.outputs.commit_short }}`
+            - **编译时间**: `${{ steps.meta.outputs.datetime }}`
+            - **编译目标**: arm64=${{ inputs.build_arm64 }} / x86_64=${{ inputs.build_x86_64 }}
+
+            ### 下载说明
+            | 文件 | 适用机型 |
+            |------|----------|
+            | `Singboard-macos-arm64-*.zip` | Apple Silicon（M1/M2/M3/M4） |
+            | `Singboard-macos-x86_64-*.zip` | Intel Mac |
+
+            ### 使用说明
+            1. 【重要】sing-box 的配置文件，必须在 experimental 中配置 clash_api ，否则会运行异常。
+            2. 根据机型下载对应 zip，解压后将 `Singboard.app` 拖入应用程序文件夹
+            3. 前往 [sing-box releases](https://github.com/SagerNet/sing-box/releases) 下载对应架构内核（arm64 或 amd64）
+            4. 解压后改名为 `sing-box`，放入工作目录（与 `config.json` 同级）
+            5. 首次启动核心时会弹出一次管理员密码框（用于安装特权 Helper），之后无需再次输入
+
+            ### 【重要更新说明】
+            ### 【重要更新说明】
+            ### 【重要更新说明】
+            若已经安装使用过 singboard for mac ，替换新版 **singboard** 时 **必须：**
+            1. 点击【停止核心】
+            2. 设置中点击【卸载服务】
+            3. 顶部菜单栏右键点击 singboard 图标，选择退出。即：完全退出 singboard 
+            4. 最后再对 **应用程序** 里面的 **singboard.app** 进行替换操作。
+
+          files: release-assets/*.zip
+          draft: false
+          prerelease: false
