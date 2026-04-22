@@ -12,6 +12,14 @@
     "core:window:allow-hide",
     "core:window:allow-show",
     "window-state:default",
-    "dialog:default"
+    "dialog:default",
+    "shell:allow-open",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" }
+      ]
+    }
   ]
 }
