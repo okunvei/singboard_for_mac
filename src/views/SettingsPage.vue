@@ -29,6 +29,32 @@ const {
   updateActiveClashApi,
   removeClashApi,
 } = useConfigStore()
+
+// 计算属性：负责把 "socks5h://127.0.0.1:1080" 转换成 "1080" 给输入框
+// 以及把 "1080" 还原回全路径存入 store
+const selfProxyPort = computed({
+  get: () => {
+    if (!config.value.selfProxy) return ''
+    // 提取冒号后面的数字
+    return config.value.selfProxy.split(':').pop() || ''
+  },
+  set: (val: string) => {
+    const port = val.trim()
+    if (!port) {
+      config.value.selfProxy = '' // 留空则清空，回退主分支逻辑
+    } else {
+      // 自动拼接焊死的协议和 IP
+      config.value.selfProxy = `socks5h://127.0.0.1:${port}`
+    }
+  }
+})
+
+// 简单的校验：只允许输入数字
+const validatePort = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  target.value = target.value.replace(/[^\d]/g, '')
+}
+
 const { serviceStatus, statusText, refresh } = useServiceStore()
 const { pushToast } = useToastStore()
 const confirmDialogRef = ref<InstanceType<typeof ConfirmDialog> | null>(null)
@@ -730,5 +756,34 @@ watch(
         </div>
       </div>
     </div>
+
+    <div class="bg-base-200 rounded-lg p-4 space-y-3">
+      <h2 class="font-semibold text-sm">自身代理 (仅限本地)</h2>
+      <div class="form-control">
+        <label class="label">
+          <span class="label-text text-xs">本地 SOCKS5 端口</span>
+        </label>
+        
+        <div class="join w-full">
+          <span class="join-item btn btn-sm btn-disabled border-base-300 bg-base-300 text-base-content/50 no-animation">
+            socks5h://127.0.0.1:
+          </span>
+          <input
+            v-model="selfProxyPort"
+            type="text"
+            class="input input-sm input-bordered join-item flex-1"
+            placeholder="例如: 1080"
+            @input="validatePort"
+          />
+        </div>
+    
+        <label class="label">
+          <span class="label-text-alt text-base-content/40 text-xs">
+            填入端口即优先走此代理；留空则跟随系统设置。
+          </span>
+        </label>
+      </div>
+    </div>
+
   </div>
 </template>

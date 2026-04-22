@@ -7,7 +7,7 @@ use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 
 #[tauri::command]
 fn set_close_to_tray(enabled: bool) {
@@ -135,6 +135,7 @@ fn run_gui() {
             singboard_lib::commands::srs::srs_list_provider,
             singboard_lib::commands::network::fetch_url,
             singboard_lib::commands::network::http_ping,
+            singboard_lib::commands::network::set_self_proxy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

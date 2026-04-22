@@ -15,6 +15,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+lazy_static = "1.4.0"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2.2.0"
 tauri-plugin-window-state = "2"
@@ -32,7 +33,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 winreg = "0.55"
 log = "0.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
 flate2 = "1"
 tauri-plugin-dialog = "2"
 sha2 = "0.10"
