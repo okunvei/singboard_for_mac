@@ -33,7 +33,7 @@ winreg = "0.55"
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 flate2 = "1"
-tauri-plugin-dialog = "2.6.0"
+tauri-plugin-dialog = "2"
 sha2 = "0.10"
 
 [profile.release]
