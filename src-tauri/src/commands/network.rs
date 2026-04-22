@@ -84,7 +84,7 @@ fn build_client(timeout: Option<Duration>) -> Result<reqwest::Client, reqwest::E
         get_system_proxy()
     };
 
-    match get_system_proxy().and_then(|url| reqwest::Proxy::all(&url).ok()) {
+    match proxy_to_use.and_then(|url| reqwest::Proxy::all(&url).ok()) {
         Some(proxy) => builder.proxy(proxy),
         None => builder.no_proxy(),
     }
