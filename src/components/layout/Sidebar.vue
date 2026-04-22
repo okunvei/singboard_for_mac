@@ -98,7 +98,7 @@ async function handleServiceAction(action: 'start' | 'stop' | 'restart') {
   } catch (e: any) {
     pushToast({ message: '操作失败: ' + e, type: 'error' })
   } finally {
-    actionLoading.value = ''
+    setTimeout(() => { actionLoading.value = '' }, 2000)
   }
 }
 

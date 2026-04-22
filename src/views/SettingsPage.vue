@@ -758,10 +758,10 @@ watch(
     </div>
 
     <div class="bg-base-200 rounded-lg p-4 space-y-3">
-      <h2 class="font-semibold text-sm">自身代理 (仅限本地)</h2>
+      <h2 class="font-semibold text-sm">特殊代理</h2>
       <div class="form-control">
         <label class="label">
-          <span class="label-text text-xs">本地 SOCKS5 端口</span>
+          <span class="label-text text-xs">Mixed 入站端口</span>
         </label>
         
         <div class="join w-full">
@@ -772,14 +772,14 @@ watch(
             v-model="selfProxyPort"
             type="text"
             class="input input-sm input-bordered join-item flex-1"
-            placeholder="例如: 1080"
+            placeholder="填端口号即可，例如: 7890"
             @input="validatePort"
           />
         </div>
     
         <label class="label">
           <span class="label-text-alt text-base-content/40 text-xs">
-            填入端口即优先走此代理；留空则跟随系统设置。
+            单 Mixed 入站测试用，小白保持默认留空即可
           </span>
         </label>
       </div>
