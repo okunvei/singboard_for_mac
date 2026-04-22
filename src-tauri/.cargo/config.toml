@@ -1,2 +1,4 @@
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-Ctarget-feature=+crt-static"]
+# macOS 不需要 CRT 静态链接配置
+# 如需指定目标架构，可取消注释以下任一行：
+# [target.aarch64-apple-darwin]
+# [target.x86_64-apple-darwin]

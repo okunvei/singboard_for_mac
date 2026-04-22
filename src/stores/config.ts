@@ -110,8 +110,7 @@ function normalizeConfig(raw: any): AppConfig {
       : {},
     configProfiles,
     activeConfigProfileId,
-    closeToTray: typeof raw?.closeToTray === 'boolean' ? raw.closeToTray : false,
-    // --- 只需要在这里加入下面这一行 ---
+    closeToTray: typeof raw?.closeToTray === 'boolean' ? raw.closeToTray : true,
     selfProxy: typeof raw?.selfProxy === 'string' ? raw.selfProxy : '',
   }
 }
@@ -155,10 +154,7 @@ watch(() => config.value.selfProxy, (val) => {
 async function performUpdate(id: string) {
   const profile = config.value.configProfiles.find(p => p.id === id)
   if (!profile || profile.type !== 'remote') return
-
-  // 在函数内部获取 toast，避免初始化顺序错误
   const { pushToast } = useToastStore()
-
   try {
     console.log(`[AutoUpdate] 正在执行: ${profile.name}`)
     const content = await fetchUrl(profile.source)
@@ -173,10 +169,8 @@ async function performUpdate(id: string) {
 
     // ✅ 校验通过，才允许覆盖写入
     await writeSingboxConfig(destPath, content)
-    
-    // 直接操作全局的 config ref
-    profile.lastUpdated = new Date().toISOString()
 
+    profile.lastUpdated = new Date().toISOString()
     if (id === config.value.activeConfigProfileId) {
       if (sp) {
         await copyToRunningConfig(destPath)
@@ -207,9 +201,9 @@ function setupAutoUpdate() {
       const elapsed = now - lastUpdatedMs
       let remaining = intervalMs - elapsed
 
-      // 如果已经超时，或者从未更新过，设置 1 分钟后执行（给软件启动留一点缓冲时间）
+      // 如果已经超时，或者从未更新过，设置 10 秒后执行（给软件启动留一点缓冲时间）
       if (remaining <= 0) {
-        console.log(`[AutoUpdate] ${profile.name} 已过期，将在 1 分钟后触发补偿更新`)
+        console.log(`[AutoUpdate] ${profile.name} 已过期，将在 10 秒后触发补偿更新`)
         remaining = 60_000 
       }
 
@@ -343,14 +337,16 @@ export function useConfigStore() {
 
   return {
     config,
+    configProfiles,
+    activeConfigProfileId,
+    updateConfigProfile,
+    manualUpdateRemote,
     clashApis,
     activeClashApi,
     activeClashApiId,
     clashApiUrl,
     clashApiSecret,
     serviceName,
-    configProfiles,
-    activeConfigProfileId,
     activeConfigProfile,
     updateConfig,
     setActiveClashApi,
@@ -361,8 +357,6 @@ export function useConfigStore() {
     addConfigProfile,
     removeConfigProfile,
     setActiveConfigProfile,
-    updateConfigProfile,
-    manualUpdateRemote,
     setupAutoUpdate,
   }
 }

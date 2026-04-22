@@ -461,6 +461,17 @@ export function useProxiesStore() {
     return ipv6Map.value[nowNode] === true || ipv6Map.value[name] === true
   }
 
+  // 这里的函数负责清空内存和本地存储中的历史延迟
+  function clearLatency() {
+    localStorage.removeItem(LATENCY_HISTORY_KEY) // 删除本地保存的记录
+    for (const name in proxyMap.value) {
+      if (proxyMap.value[name].history) {
+        proxyMap.value[name].history = [] // 清空当前页面内存里的记录
+      }
+    }
+  }
+
+
   async function pollAutoGroups() {
     const autoTypes = ['fallback', 'urltest']
     const autoGroups = proxyGroups.value.filter(g =>
@@ -475,16 +486,6 @@ export function useProxiesStore() {
           testGroupNodes(group.name)
         }
       } catch {}
-    }
-  }
-
-  // 这里的函数负责清空内存和本地存储中的历史延迟
-  function clearLatency() {
-    localStorage.removeItem(LATENCY_HISTORY_KEY) // 删除本地保存的记录
-    for (const name in proxyMap.value) {
-      if (proxyMap.value[name].history) {
-        proxyMap.value[name].history = [] // 清空当前页面内存里的记录
-      }
     }
   }
 

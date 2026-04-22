@@ -92,12 +92,6 @@ const clashMode = ref('Rule')
 const clashModeOptions = ref<string[]>(['Rule'])
 const singboxVersion = ref('')
 const actionLoading = ref('')
-function parseApiUrl(url: string) {
-  const match = url.match(/^(https?):\/\/([^:]+)(?::(\d+))?$/)
-  if (match) return { protocol: match[1] as 'http' | 'https', host: match[2], port: match[3] ?? '' }
-  return { protocol: 'http' as const, host: url, port: '' }
-}
-
 const activeApiForm = ref({
   name: '',
   protocol: 'http' as 'http' | 'https',
@@ -114,6 +108,19 @@ const newApiForm = ref({
 })
 const showEditApiForm = ref(false)
 const showAddApiForm = ref(false)
+
+function parseApiUrl(url: string): { protocol: 'http' | 'https'; host: string; port: string } {
+  try {
+    const parsed = new URL(url)
+    return {
+      protocol: (parsed.protocol.replace(':', '') as 'http' | 'https') || 'http',
+      host: parsed.hostname,
+      port: parsed.port,
+    }
+  } catch {
+    return { protocol: 'http', host: url, port: '' }
+  }
+}
 
 function syncActiveApiForm() {
   const current = activeClashApi.value
@@ -394,6 +401,7 @@ watch(
     syncActiveApiForm()
   },
 )
+
 </script>
 
 <template>
@@ -416,6 +424,7 @@ watch(
           :disabled="serviceStatus.state !== 'not_installed'" @click="handleServiceAction('install')">安装服务</button>
         <button class="btn btn-sm btn-outline btn-error" :class="{ loading: actionLoading === 'uninstall' }"
           :disabled="serviceStatus.state === 'not_installed'" @click="handleServiceAction('uninstall')">卸载服务</button>
+
       </div>
     </div>
 
@@ -725,24 +734,24 @@ watch(
             class="toggle toggle-sm toggle-primary"
             v-model="config.closeToTray"
           />
-          <span class="label-text text-xs">关闭时隐藏到系统托盘</span>
+          <span class="label-text text-xs">关闭时隐藏到顶部系统菜单栏</span>
 
         </div>
       </div>
     </div>
 
     <div class="bg-base-200 rounded-lg p-4 space-y-3">
-      <h2 class="font-semibold text-sm">自身代理</h2>
+      <h2 class="font-semibold text-sm">特殊代理</h2>
       <div class="form-control">
         <label class="label"><span class="label-text text-xs">代理地址 (HTTP/SOCKS5)</span></label>
         <input
           v-model="config.selfProxy"
           type="text"
           class="input input-sm input-bordered"
-          placeholder="例如: socks5://127.0.0.1:1080"
+          placeholder="例如: socks5h://127.0.0.1:1080"
         />
         <label class="label">
-          <span class="label-text-alt text-base-content/40 text-xs">如果内容为空则不配置代理</span>
+          <span class="label-text-alt text-base-content/40 text-xs">单 Mixed 入站测试用，小白保持默认留空即可</span>
         </label>
       </div>
     </div>

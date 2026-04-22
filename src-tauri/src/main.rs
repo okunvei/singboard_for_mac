@@ -1,5 +1,3 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 use std::env;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
@@ -7,7 +5,7 @@ use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 
 #[tauri::command]
 fn set_close_to_tray(enabled: bool) {
@@ -50,7 +48,7 @@ fn run_gui() {
             )
             .build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init()) // ✨ 新增
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -70,14 +68,11 @@ fn run_gui() {
                 .icon(app.default_window_icon().cloned().expect("app icon"))
                 .tooltip("Singboard")
                 .menu(&menu)
-                // --- 显式禁用左键点击弹出菜单 ---
-                .menu_on_left_click(false) 
+                .menu_on_left_click(false)
                 .on_tray_icon_event(move |tray, event| {
                     if let TrayIconEvent::Click { button, button_state, .. } = event {
-                        // 建议使用 MouseButtonState::Down 或 Up 的其中一个
                         if button == MouseButton::Left && button_state == MouseButtonState::Up {
                             let handle = tray.app_handle();
-                            // --- 使用 async_runtime 稍微解耦，避免阻塞当前事件循环导致的 UI 冲突 ---
                             let handle_clone = handle.clone();
                             tauri::async_runtime::spawn(async move {
                                 show_window(&handle_clone);
@@ -119,6 +114,8 @@ fn run_gui() {
             singboard_lib::commands::service::service_install,
             singboard_lib::commands::service::service_uninstall,
             singboard_lib::commands::service::service_error_log,
+            singboard_lib::commands::service::helper_running,
+            singboard_lib::commands::service::clear_system_proxy,
             singboard_lib::commands::config::read_config,
             singboard_lib::commands::config::write_config,
             singboard_lib::commands::config::validate_config,
@@ -136,6 +133,8 @@ fn run_gui() {
             singboard_lib::commands::network::fetch_url,
             singboard_lib::commands::network::http_ping,
             singboard_lib::commands::network::set_self_proxy,
+            singboard_lib::commands::network::check_system_proxy_inbound,
+            singboard_lib::commands::network::clear_macos_system_proxy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -146,9 +145,7 @@ fn run_gui() {
             match event {
                 tauri::RunEvent::WindowEvent {
                     label,
-                    event:
-                        tauri::WindowEvent::Resized(_)
-                        | tauri::WindowEvent::Moved(_),
+                    event: tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_),
                     ..
                 } => {
                     if label == "main" {
