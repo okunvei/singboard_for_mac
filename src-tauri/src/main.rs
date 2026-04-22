@@ -1,5 +1,3 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 use std::env;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
@@ -13,6 +11,26 @@ static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 fn set_close_to_tray(enabled: bool) {
     CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
 }
+
+/// macOS 专属：切换 Dock 图标的显示/隐藏。
+/// visible=true  → NSApplicationActivationPolicyRegular   (Dock 中显示图标)
+/// visible=false → NSApplicationActivationPolicyAccessory (Dock 中隐藏图标)
+#[cfg(target_os = "macos")]
+fn set_dock_visible(visible: bool) {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        // 0 = Regular（普通应用，显示 Dock 图标）
+        // 1 = Accessory（辅助应用，隐藏 Dock 图标，只留菜单栏图标）
+        let policy: i64 = if visible { 0 } else { 1 };
+        let _: () = msg_send![ns_app, setActivationPolicy: policy];
+    }
+}
+
+/// 非 macOS 平台的空实现，保证编译通过
+#[cfg(not(target_os = "macos"))]
+fn set_dock_visible(_visible: bool) {}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -31,6 +49,8 @@ fn main() {
 
 fn show_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        // 先恢复 Dock 图标，再显示窗口，顺序很重要
+        set_dock_visible(true);
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
@@ -104,6 +124,8 @@ fn run_gui() {
                         api.prevent_close();
                         let _ = window.emit("window-visibility", false);
                         let _ = window.hide();
+                        // 隐藏窗口后同步隐藏 Dock 图标
+                        set_dock_visible(false);
                     } else {
                         let _ = window.app_handle().exit(0);
                     }
@@ -119,6 +141,7 @@ fn run_gui() {
             singboard_lib::commands::service::service_install,
             singboard_lib::commands::service::service_uninstall,
             singboard_lib::commands::service::service_error_log,
+            singboard_lib::commands::service::helper_running,
             singboard_lib::commands::config::read_config,
             singboard_lib::commands::config::write_config,
             singboard_lib::commands::config::validate_config,
@@ -136,6 +159,8 @@ fn run_gui() {
             singboard_lib::commands::network::fetch_url,
             singboard_lib::commands::network::http_ping,
             singboard_lib::commands::network::set_self_proxy,
+            singboard_lib::commands::network::check_system_proxy_inbound,
+            singboard_lib::commands::network::clear_macos_system_proxy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -146,9 +171,7 @@ fn run_gui() {
             match event {
                 tauri::RunEvent::WindowEvent {
                     label,
-                    event:
-                        tauri::WindowEvent::Resized(_)
-                        | tauri::WindowEvent::Moved(_),
+                    event: tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_),
                     ..
                 } => {
                     if label == "main" {

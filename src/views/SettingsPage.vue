@@ -359,7 +359,7 @@ async function handleServiceAction(action: string) {
 async function browseSingboxPath() {
   const selected = await open({
     multiple: false,
-    filters: [{ name: '可执行文件', extensions: ['exe'] }],
+    filters: [{ name: 'sing-box 可执行文件', extensions: [] }],
     defaultPath: config.value.workingDir.trim() || undefined,
   })
   if (selected) {
@@ -704,7 +704,7 @@ watch(
             v-model="config.singboxPath"
             type="text"
             class="input input-sm input-bordered flex-1"
-            placeholder="C:\sing-box\sing-box.exe"
+            placeholder="/usr/local/bin/sing-box"
           />
           <button class="btn btn-sm btn-outline shrink-0" @click="browseSingboxPath">浏览</button>
         </div>
@@ -751,7 +751,7 @@ watch(
             class="toggle toggle-sm toggle-primary"
             v-model="config.closeToTray"
           />
-          <span class="label-text text-xs">关闭时隐藏到系统托盘</span>
+          <span class="label-text text-xs">关闭时隐藏到顶部系统菜单栏</span>
 
         </div>
       </div>

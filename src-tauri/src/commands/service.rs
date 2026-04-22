@@ -64,3 +64,12 @@ pub async fn service_error_log(service_name: String) -> Result<String, String> {
         .await
         .map_err(|e| format!("Task join error: {}", e))?
 }
+
+/// 检查 Helper 是否在运行（前端用于显示状态）
+#[tauri::command]
+pub async fn helper_running() -> bool {
+    tokio::task::spawn_blocking(scm::is_helper_running)
+        .await
+        .unwrap_or(false)
+}
+
