@@ -109,6 +109,13 @@ export function useConnectionsStore() {
     if (refCount === 0) stop()
   })
 
+  function resetOnRestart() {
+    closedConnections.value = []
+    connections.value = []
+    downloadTotal.value = 0
+    uploadTotal.value = 0
+  }
+
   async function closeConnection(id: string) {
     await disconnectById(id)
   }
@@ -128,6 +135,7 @@ export function useConnectionsStore() {
     filterText,
     start,
     stop,
+    resetOnRestart,
     closeConnection,
     closeAllConnections,
   }

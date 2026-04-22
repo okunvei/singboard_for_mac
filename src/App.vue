@@ -7,7 +7,10 @@ import SetupWizard from '@/components/common/SetupWizard.vue'
 import { useConfigStore } from '@/stores/config'
 import { useServiceStore } from '@/stores/service'
 import { useProxiesStore } from '@/stores/proxies'
+import { useOverviewStore } from '@/stores/overview'
+import { useConnectionsStore } from '@/stores/connections'
 import { copyToRunningConfig, getRemoteConfigPath } from '@/bridge/config'
+import { useConfigAutoUpdate } from '@/composables/useConfigAutoUpdate'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getIPFromIpipnet, getIPFromIpsb } from '@/api/geoip'
 import {
@@ -20,7 +23,10 @@ import {
 
 const { config, configProfiles } = useConfigStore()
 const { serviceStatus, ready: serviceReady } = useServiceStore()
+const { start: startAutoUpdate } = useConfigAutoUpdate()
 const { loadProxies, resumePendingTests } = useProxiesStore()
+const { resetHistory: resetOverviewHistory } = useOverviewStore()
+const { resetOnRestart: resetConnections } = useConnectionsStore()
 
 const setupWizardVisible = ref(false)
 const setupWizardRef = ref<InstanceType<typeof SetupWizard> | null>(null)
@@ -102,13 +108,25 @@ onMounted(async () => {
   await syncActiveConfigToRunning()
   await loadProxies()
   resumePendingTests()
+  startAutoUpdate()
 })
+
+let coreStartedOnce = false
 
 watch(
   () => serviceStatus.value.state,
-  (state, oldState) => {
-    if (state === 'running' && oldState !== 'running') {
+  (state) => {
+    if (state === 'running') {
+      if (coreStartedOnce) {
+        resetOverviewHistory()
+        resetConnections()
+        sessionStorage.removeItem(NETWORK_CACHE_KEY)
+      }
+      coreStartedOnce = true
       setTimeout(runNetworkAutoTest, 3000)
+    } else if (coreStartedOnce) {
+      resetOverviewHistory()
+      resetConnections()
     }
   },
   { immediate: true },

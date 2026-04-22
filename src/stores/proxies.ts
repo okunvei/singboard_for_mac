@@ -188,12 +188,12 @@ export function useProxiesStore() {
     return proxyNode?.testUrl || defaultUrl
   }
 
-  async function loadProxies() {
+  async function loadProxies(fresh = false) {
     loading.value = true
     const nowTime = Date.now()
     fetchTime = nowTime
-    const previousMap = proxyMap.value
-    const storedLatencyHistoryMap = loadLatencyHistoryMap()
+    const previousMap = fresh ? {} : proxyMap.value
+    const storedLatencyHistoryMap = fresh ? {} : loadLatencyHistoryMap()
     try {
       const [{ data }, providersRes] = await Promise.all([
         fetchProxies(),
@@ -231,19 +231,25 @@ export function useProxiesStore() {
         }
       }
 
-      for (const [name, proxy] of Object.entries(merged)) {
-        const previous = previousMap[name]
-        const storedHistory = storedLatencyHistoryMap[name]
-        if (!previous && !storedHistory) continue
+      if (!fresh) {
+        for (const [name, proxy] of Object.entries(merged)) {
+          const previous = previousMap[name]
+          const storedHistory = storedLatencyHistoryMap[name]
+          if (!previous && !storedHistory) continue
 
-        const localHistory = pickNewerHistory(previous?.history, storedHistory)
-        merged[name] = {
-          ...proxy,
-          history: pickNewerHistory(proxy.history, localHistory),
+          const localHistory = pickNewerHistory(previous?.history, storedHistory)
+          merged[name] = {
+            ...proxy,
+            history: pickNewerHistory(proxy.history, localHistory),
+          }
         }
       }
       proxyMap.value = merged
-      persistLatencyHistoryMap()
+      if (fresh) {
+        flushLatencyHistoryMap()
+      } else {
+        persistLatencyHistoryMap()
+      }
 
       for (const [name, proxy] of Object.entries(proxyMap.value)) {
         const ipv6History = proxy.extra?.[IPV6_TEST_URL]?.history
@@ -336,7 +342,7 @@ export function useProxiesStore() {
       if (config.value.ipv6TestEnabled) saveIPv6Map()
     } else {
       if (config.value.ipv6TestEnabled) {
-        testGroupLatency(groupName, IPV6_TEST_URL, IPV6_TEST_TIMEOUT)
+        await testGroupLatency(groupName, IPV6_TEST_URL, IPV6_TEST_TIMEOUT)
           .then(({ data }) => {
             const results = data as Record<string, number>
             for (const [name, delay] of Object.entries(results)) {
@@ -351,14 +357,24 @@ export function useProxiesStore() {
             saveIPv6Map()
           })
       }
+      const now = new Date().toISOString()
       try {
         const { data } = await testGroupLatency(groupName, url, Math.max(5000, LATENCY_TIMEOUT))
         const results = data as Record<string, number>
-        const now = new Date().toISOString()
+        const tested = new Set(Object.keys(results))
         for (const [name, delay] of Object.entries(results)) {
           appendProxyHistory(name, delay, now)
         }
-      } catch { }
+        for (const name of group.all!) {
+          if (!tested.has(name)) {
+            appendProxyHistory(name, 0, now)
+          }
+        }
+      } catch {
+        for (const name of group.all!) {
+          appendProxyHistory(name, 0, now)
+        }
+      }
     }
 
     flushLatencyHistoryMap()
