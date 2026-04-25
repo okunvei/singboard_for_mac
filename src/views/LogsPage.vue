@@ -15,7 +15,7 @@ const {
 const logContainer = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
 
-const levels = ['trace', 'debug', 'info', 'warning', 'error']
+const levels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'panic']
 
 function levelColor(type: string): string {
   switch (type.toLowerCase()) {

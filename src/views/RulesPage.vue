@@ -363,9 +363,6 @@ watch(isRunning, (running) => {
           </a>
         </div>
       </div>
-      <button class="btn btn-sm btn-ghost" :class="{ 'loading': loading }" @click="loadRules">
-        刷新
-      </button>
     </div>
 
     <template v-if="activeTab === 'rules'">
@@ -377,25 +374,25 @@ watch(isRunning, (running) => {
       />
 
       <div class="flex-1 overflow-auto">
-        <div class="space-y-0.5">
+        <div class="space-y-1.5">
           <div
             v-for="(rule, i) in filteredRules"
             :key="i"
-            class="grid grid-cols-[1.25rem_1fr] gap-x-1.5 px-3 py-1.5 hover:bg-base-200/50 rounded text-xs"
+            class="bg-base-200 rounded-lg px-3 py-2 flex items-center gap-3 text-xs hover:bg-base-300/50 transition-colors"
           >
-            <span class="text-base-content/30 tabular-nums text-right row-span-2 pt-0.5">{{ i + 1 }}</span>
-            <div class="flex items-baseline gap-1.5 min-w-0">
+            <span class="text-base-content/30 tabular-nums w-5 text-right shrink-0">{{ i + 1 }}</span>
+            <div class="flex-1 flex items-center gap-2 min-w-0">
               <span class="leading-none px-1.5 py-0.5 rounded bg-base-content/10 text-base-content/60 shrink-0">{{ rule.type }}</span>
               <span v-if="rule.payload" class="text-base-content/50 truncate" :title="rule.payload">{{ rule.payload }}</span>
             </div>
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1 shrink-0">
               <template v-for="(node, j) in resolveProxyChain(rule.proxy)" :key="j">
-                <span v-if="j > 0" class="text-base-content/20 text-xs">›</span>
-                <span class="text-xs leading-none px-1.5 py-0.5 rounded" :class="actionColor(node)">{{ node }}</span>
+                <span v-if="j > 0" class="text-base-content/20">›</span>
+                <span class="leading-none px-1.5 py-0.5 rounded" :class="actionColor(node)">{{ node }}</span>
               </template>
               <span
                 v-if="getLatency(resolveProxyChain(rule.proxy).slice(-1)[0]) > 0"
-                class="text-xs leading-none px-1.5 py-0.5 rounded"
+                class="leading-none px-1.5 py-0.5 rounded"
                 :class="latencyColor(getLatency(resolveProxyChain(rule.proxy).slice(-1)[0]))"
               >{{ getLatency(resolveProxyChain(rule.proxy).slice(-1)[0]) }}</span>
             </div>

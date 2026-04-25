@@ -252,6 +252,7 @@ onMounted(() => {
             <th class="z-20 bg-base-200 text-right cursor-pointer select-none hover:text-primary" @click="toggleSort('dl')">下载{{ sortIcon('dl') }}</th>
             <th class="z-20 bg-base-200 text-right cursor-pointer select-none hover:text-primary" @click="toggleSort('ul')">上传{{ sortIcon('ul') }}</th>
             <th class="z-20 bg-base-200 text-right cursor-pointer select-none hover:text-primary" @click="toggleSort('duration')">时长{{ sortIcon('duration') }}</th>
+            <th class="z-20 bg-base-200 w-8"></th>
           </tr>
         </thead>
         <tbody>
@@ -276,6 +277,7 @@ onMounted(() => {
             <td class="text-right text-xs whitespace-nowrap min-w-20">{{ formatBytes(conn.download) }}</td>
             <td class="text-right text-xs whitespace-nowrap min-w-20">{{ formatBytes(conn.upload) }}</td>
             <td class="text-right text-xs text-base-content/50 whitespace-nowrap">{{ formatDuration(conn.start) }}</td>
+            <td class="w-8"><span class="block h-6"></span></td>
           </tr>
         </tbody>
       </table>
