@@ -195,7 +195,6 @@ pub fn start_service(service_name: &str) -> Result<(), String> {
         let scm = open_scm()?;
         let svc = open_service_handle(scm, service_name, SERVICE_START | SERVICE_QUERY_STATUS | SERVICE_STOP)?;
 
-        // Check if the service is stuck in a pending state and try to recover
         {
             let mut status: SERVICE_STATUS_PROCESS = std::mem::zeroed();
             let mut bytes_needed: u32 = 0;
@@ -222,7 +221,6 @@ pub fn start_service(service_name: &str) -> Result<(), String> {
                         windows_sys::Win32::Foundation::CloseHandle(handle);
                     }
                 }
-                // Wait for SCM to recognize the process is gone
                 for _ in 0..20 {
                     thread::sleep(Duration::from_millis(500));
                     let qok2 = QueryServiceStatusEx(
@@ -251,7 +249,6 @@ pub fn start_service(service_name: &str) -> Result<(), String> {
             return Err(format!("StartService failed: error {}", err));
         }
 
-        // Wait for the service to leave START_PENDING and verify it's running
         for _ in 0..20 {
             thread::sleep(Duration::from_millis(250));
             let mut status: SERVICE_STATUS_PROCESS = std::mem::zeroed();
@@ -275,7 +272,6 @@ pub fn start_service(service_name: &str) -> Result<(), String> {
                 SERVICE_STOPPED => {
                     CloseServiceHandle(svc);
                     CloseServiceHandle(scm);
-                    // 读取错误日志获取具体报错
                     let detail = read_service_error_log(service_name)
                         .unwrap_or_default();
                     let msg = if detail.is_empty() {
@@ -360,7 +356,7 @@ pub fn install_service(
             wide_display.as_ptr(),
             SERVICE_ALL_ACCESS,
             SERVICE_WIN32_OWN_PROCESS,
-            SERVICE_AUTO_START,
+            SERVICE_DEMAND_START,
             SERVICE_ERROR_NORMAL,
             wide_bin.as_ptr(),
             ptr::null(),
@@ -375,10 +371,29 @@ pub fn install_service(
         if svc.is_null() {
             let err = GetLastError();
             if err == 1073 {
+                let scm2 = open_scm()?;
+                let wide_name2 = to_wide(service_name);
+                let svc2 = OpenServiceW(scm2, wide_name2.as_ptr(), SERVICE_CHANGE_CONFIG);
+                if !svc2.is_null() {
+                    ChangeServiceConfigW(
+                        svc2,
+                        SERVICE_NO_CHANGE,
+                        SERVICE_DEMAND_START,
+                        SERVICE_NO_CHANGE,
+                        ptr::null(),
+                        ptr::null(),
+                        ptr::null_mut(),
+                        ptr::null(),
+                        ptr::null(),
+                        ptr::null(),
+                        ptr::null(),
+                    );
+                    CloseServiceHandle(svc2);
+                }
+                CloseServiceHandle(scm2);
                 return Ok(());
             }
             if err == 1072 {
-                // Service marked for deletion — wait for it to be fully removed, then retry
                 CloseServiceHandle(scm);
                 for _ in 0..10 {
                     thread::sleep(Duration::from_millis(500));
@@ -515,9 +530,57 @@ pub fn read_service_params(service_name: &str) -> Result<(String, String, String
     Ok((singbox_path, config_path, working_dir))
 }
 
-/// 读取 sing-box 最近一次的错误日志
 pub fn read_service_error_log(service_name: &str) -> Result<String, String> {
     let log_path = resolve_service_error_log_path(service_name);
     std::fs::read_to_string(&log_path)
         .map_err(|e| format!("Failed to read error log: {}", e))
+}
+
+pub fn create_startup_task(service_name: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    let task_name = format!("singboard-autostart-{}", service_name);
+    let script = format!(
+        "$a=New-ScheduledTaskAction -Execute 'sc.exe' -Argument 'start {svc}';\
+         $t=New-ScheduledTaskTrigger -AtLogOn;\
+         $t.Delay='PT30S';\
+         $s=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit 0;\
+         $p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest;\
+         Register-ScheduledTask -TaskName '{name}' -Action $a -Trigger $t -Settings $s -Principal $p -Force",
+        svc = service_name,
+        name = task_name,
+    );
+
+    let status = std::process::Command::new("powershell")
+        .args(["-NonInteractive", "-NoProfile", "-Command", &script])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .status()
+        .map_err(|e| format!("执行 PowerShell 失败: {}", e))?;
+
+    if !status.success() {
+        return Err(format!("创建任务计划失败: exit code {:?}", status.code()));
+    }
+    Ok(())
+}
+
+pub fn delete_startup_task(service_name: &str) {
+    use std::os::windows::process::CommandExt;
+
+    let task_name = format!("singboard-autostart-{}", service_name);
+    let _ = std::process::Command::new("schtasks")
+        .args(["/Delete", "/TN", &task_name, "/F"])
+        .creation_flags(0x08000000)
+        .status();
+}
+
+pub fn startup_task_exists(service_name: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+
+    let task_name = format!("singboard-autostart-{}", service_name);
+    std::process::Command::new("schtasks")
+        .args(["/Query", "/TN", &task_name])
+        .creation_flags(0x08000000)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }

@@ -33,3 +33,15 @@ export async function uninstallService(serviceName: string): Promise<void> {
 export async function readServiceErrorLog(serviceName: string): Promise<string> {
   return invoke<string>('service_error_log', { serviceName })
 }
+
+export async function startupTaskExists(serviceName: string): Promise<boolean> {
+  return invoke<boolean>('service_startup_task_exists', { serviceName })
+}
+
+export async function createStartupTask(serviceName: string): Promise<void> {
+  return invoke('service_create_startup_task', { serviceName })
+}
+
+export async function deleteStartupTask(serviceName: string): Promise<void> {
+  return invoke('service_delete_startup_task', { serviceName })
+}
