@@ -14,7 +14,7 @@ const api = axios.create({
 })
 
 api.interceptors.request.use((cfg) => {
-  const { clashApiUrl, clashApiSecret } = useConfigStore()
+  const { clashApiUrl, clashApiSecret, config } = useConfigStore()
   cfg.baseURL = clashApiUrl.value
   if (clashApiSecret.value) {
     cfg.headers.Authorization = `Bearer ${clashApiSecret.value}`

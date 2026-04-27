@@ -59,12 +59,11 @@ export function useConfigAutoUpdate() {
       timers.set(profile.id, { interval: iv })
     }
 
-    if (initialDelay === 0) {
-      startInterval()
-    } else {
-      const to = setTimeout(startInterval, initialDelay)
-      timers.set(profile.id, { timeout: to })
-    }
+    const jitter = Math.random() * 30_000 // 0~30秒
+    const delay = initialDelay === 0 ? 60_000 + jitter : initialDelay
+
+    const to = setTimeout(startInterval, delay)
+    timers.set(profile.id, { timeout: to })
   }
 
   function syncTimers(profiles: ConfigProfile[]) {
