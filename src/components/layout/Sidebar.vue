@@ -7,6 +7,7 @@ import { normalizeVersionText } from '@/utils/format'
 import { useToastStore } from '@/stores/toast'
 import { getSingboxVersion, validateSingboxConfig, getRunningConfigPath, getRemoteConfigPath, copyToRunningConfig } from '@/bridge/config'
 import { startService, stopService } from '@/bridge/service'
+import { invoke } from '@tauri-apps/api/core'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,11 +49,23 @@ async function refreshVersion() {
   } catch (e: any) {
     const errMsg = String(e?.message || e)
     // 捕获“找不到文件”的错误
-    if (errMsg.includes('系统找不到指定的文件') || errMsg.includes('not found') || errMsg.includes('2')) {
-      singboxVersion.value = '❌ 未安装 exe 核心'
+    if (errMsg.includes('not found') || errMsg.includes('2')) {
+      singboxVersion.value = '❌ 未找到内核文件'
     } else {
       singboxVersion.value = '版本获取失败'
     }
+  }
+}
+
+// 重启或停止前检测系统代理是否开启，若开启则清除
+async function tryCheckAndClearProxy() {
+  try {
+    const isOn = await invoke<boolean>('check_system_proxy_inbound', { configPath: '' })
+    if (isOn) {
+      await invoke('clear_macos_system_proxy')
+    }
+  } catch {
+    // 检测失败不影响停止流程
   }
 }
 
@@ -90,8 +103,13 @@ async function handleServiceAction(action: 'start' | 'stop' | 'restart') {
     if (action === 'start' || action === 'restart') {
       if (!(await validateBeforeStart())) return
       if (action === 'restart') await stopService(name)
+      if (action === 'restart') {
+        await tryCheckAndClearProxy()
+        await stopService(name)
+      }
       await startService(name)
     } else {
+      await tryCheckAndClearProxy()
       await stopService(name)
     }
     setTimeout(refresh, 1000)

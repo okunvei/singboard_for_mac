@@ -2,7 +2,6 @@
 pub async fn get_singbox_version(singbox_path: String) -> Result<String, String> {
     let output = tokio::process::Command::new(&singbox_path)
         .args(["version"])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .output()
         .await
         .map_err(|e| format!("Failed to run sing-box version: {}", e))?;

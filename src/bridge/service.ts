@@ -34,14 +34,12 @@ export async function readServiceErrorLog(serviceName: string): Promise<string> 
   return invoke<string>('service_error_log', { serviceName })
 }
 
-export async function startupTaskExists(serviceName: string): Promise<boolean> {
-  return invoke<boolean>('service_startup_task_exists', { serviceName })
+/** 检查特权 Helper 是否正在运行 */
+export async function helperRunning(): Promise<boolean> {
+  return invoke<boolean>('helper_running')
 }
 
-export async function createStartupTask(serviceName: string): Promise<void> {
-  return invoke('service_create_startup_task', { serviceName })
-}
-
-export async function deleteStartupTask(serviceName: string): Promise<void> {
-  return invoke('service_delete_startup_task', { serviceName })
+/** 通过 Helper 清除 macOS 系统代理 */
+export async function clearSystemProxy(): Promise<void> {
+  return invoke('clear_macos_system_proxy')
 }

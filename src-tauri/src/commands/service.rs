@@ -45,8 +45,6 @@ pub async fn service_install(
 
         scm::install_service(&service_name, &bin_path, &display_name)?;
 
-        scm::create_startup_task(&service_name)?;
-
         Ok(())
     })
     .await
@@ -55,36 +53,9 @@ pub async fn service_install(
 
 #[tauri::command]
 pub async fn service_uninstall(service_name: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        scm::delete_startup_task(&service_name);
-        scm::uninstall_service(&service_name)
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
-}
-
-#[tauri::command]
-pub async fn service_startup_task_exists(service_name: String) -> bool {
-    tokio::task::spawn_blocking(move || scm::startup_task_exists(&service_name))
-        .await
-        .unwrap_or(false)
-}
-
-#[tauri::command]
-pub async fn service_create_startup_task(service_name: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || scm::create_startup_task(&service_name))
+    tokio::task::spawn_blocking(move || scm::uninstall_service(&service_name))
         .await
         .map_err(|e| format!("Task join error: {}", e))?
-}
-
-#[tauri::command]
-pub async fn service_delete_startup_task(service_name: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        scm::delete_startup_task(&service_name);
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -93,3 +64,12 @@ pub async fn service_error_log(service_name: String) -> Result<String, String> {
         .await
         .map_err(|e| format!("Task join error: {}", e))?
 }
+
+/// 检查 Helper 是否在运行（前端用于显示状态）
+#[tauri::command]
+pub async fn helper_running() -> bool {
+    tokio::task::spawn_blocking(scm::is_helper_running)
+        .await
+        .unwrap_or(false)
+}
+
